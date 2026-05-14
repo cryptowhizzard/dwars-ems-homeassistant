@@ -1,6 +1,6 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "slug": "dwars_installer",
   "description": "Installeert en update DWARS custom components en inverter agents voor GoodWe, SolarEdge of een andere omvormer vanuit één repository.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
@@ -34,7 +34,7 @@
     "watch_for_embedded_updates": true,
     "auto_update_from_github": false,
     "github_repo_zip_url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/archive/refs/heads/main.zip",
-    "update_check_interval_sec": 21600,
+    "update_check_interval_sec": 900,
     "goodwe_agent_api_url": "https://api.metdezon.nl/bms/api/next_action.php",
     "goodwe_agent_telemetry_url": "https://api.metdezon.nl/bms/api/telemetry.php",
     "goodwe_agent_api_key": "",
@@ -97,7 +97,11 @@
     "dwars_addon_ha_charge_power_value": "server_power",
     "dwars_addon_ha_discharge_power_value": "server_power",
     "dwars_addon_ha_idle_power_value": "skip",
-    "dwars_addon_ha_set_power_before_mode": true
+    "dwars_addon_ha_set_power_before_mode": true,
+    "force_update_agent_addons": true,
+    "restart_agent_addons_after_update": true,
+    "addon_update_backup": false,
+    "rebuild_agent_addons_when_repo_changed": true
   },
   "schema": {
     "inverter_type": "list(goodwe|solaredge|both|andere_omvormer)",
@@ -173,7 +177,11 @@
     "dwars_addon_ha_charge_power_value": "str?",
     "dwars_addon_ha_discharge_power_value": "str?",
     "dwars_addon_ha_idle_power_value": "str?",
-    "dwars_addon_ha_set_power_before_mode": "bool"
+    "dwars_addon_ha_set_power_before_mode": "bool",
+    "force_update_agent_addons": "bool",
+    "restart_agent_addons_after_update": "bool",
+    "addon_update_backup": "bool",
+    "rebuild_agent_addons_when_repo_changed": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",

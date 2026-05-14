@@ -256,11 +256,148 @@ ensure_store_reloaded() {
   try_supervisor_curl POST /addons/reload '{}' >/dev/null
 }
 
+json_field() {
+  local json="$1"
+  local key="$2"
+  local default="${3-}"
+  printf '%s' "$json" | jq -r --arg k "$key" --arg d "$default" '((.data // .)[$k] // $d) | tostring' 2>/dev/null || printf '%s' "$default"
+}
+
+get_addon_info_json() {
+  local addon_slug="$1"
+  supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || true
+}
+
+get_store_addon_info_json() {
+  local addon_slug="$1"
+  supervisor_curl GET "/store/addons/${addon_slug}" 2>/dev/null || true
+}
+
+restart_agent_after_addon_change() {
+  local addon_slug="$1"
+  local label="$2"
+  local previous_state="$3"
+
+  [ "$(get_bool restart_agent_addons_after_update true)" = "true" ] || return 0
+
+  if [ "$previous_state" = "started" ] || [ "$(get_bool start_agent_addons false)" = "true" ]; then
+    log "${label}: herstart/start na add-on update."
+    supervisor_curl POST "/addons/${addon_slug}/restart" '{}' >/dev/null \
+      || supervisor_curl POST "/addons/${addon_slug}/start" '{}' >/dev/null \
+      || true
+  fi
+}
+
+rebuild_addon_if_repo_source_changed() {
+  local addon_slug="$1"
+  local base_slug="$2"
+  local label="$3"
+  local source_root="${4-}"
+  local previous_state="$5"
+  local version_update_done="$6"
+
+  [ "$(get_bool rebuild_agent_addons_when_repo_changed true)" = "true" ] || return 0
+  [ -n "$source_root" ] || return 0
+  [ -d "${source_root}/${base_slug}" ] || return 0
+
+  local source_hash state_file old_hash
+  source_hash="$(dir_hash "${source_root}/${base_slug}")"
+  state_file="${STATE_DIR}/${base_slug}.addon_source.sha256"
+  old_hash=""
+  [ -f "$state_file" ] && old_hash="$(cat "$state_file" 2>/dev/null || true)"
+
+  if [ "$old_hash" = "$source_hash" ]; then
+    log "${label}: add-on source is ongewijzigd (${source_hash})."
+    return 0
+  fi
+
+  if [ "$version_update_done" = "true" ]; then
+    log "${label}: add-on source hash gewijzigd en versie-update is al uitgevoerd (${source_hash})."
+    printf '%s\n' "$source_hash" > "$state_file"
+    return 0
+  fi
+
+  log "${label}: add-on source gewijzigd op GitHub; rebuild wordt geprobeerd (${old_hash:-geen} -> ${source_hash})."
+  if supervisor_curl POST "/addons/${addon_slug}/rebuild" '{"force": true}' >/dev/null; then
+    printf '%s\n' "$source_hash" > "$state_file"
+    restart_agent_after_addon_change "$addon_slug" "$label" "$previous_state"
+    return 0
+  fi
+
+  log "${label}: rebuild faalde; fallback naar Store update endpoint."
+  if supervisor_curl POST "/store/addons/${addon_slug}/update" '{"backup": false, "background": false}' >/dev/null; then
+    printf '%s\n' "$source_hash" > "$state_file"
+    restart_agent_after_addon_change "$addon_slug" "$label" "$previous_state"
+    return 0
+  fi
+
+  log "${label}: kon add-on niet rebuilden/updaten. Verhoog anders de version in ${base_slug}/config.json."
+  return 1
+}
+
+update_addon_if_available() {
+  local addon_slug="$1"
+  local base_slug="$2"
+  local label="$3"
+  local source_root="${4-}"
+
+  [ "$(get_bool force_update_agent_addons true)" = "true" ] || return 0
+
+  local addon_info store_info installed current latest update_available state backup update_payload version_update_done
+  addon_info="$(get_addon_info_json "$addon_slug")"
+  store_info="$(get_store_addon_info_json "$addon_slug")"
+
+  installed="$(json_field "$addon_info" installed false)"
+  current="$(json_field "$addon_info" version '')"
+  latest="$(json_field "$store_info" version_latest '')"
+  if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+    latest="$(json_field "$addon_info" version_latest '')"
+  fi
+  update_available="$(json_field "$store_info" update_available '')"
+  if [ -z "$update_available" ] || [ "$update_available" = "null" ]; then
+    update_available="$(json_field "$addon_info" update_available false)"
+  fi
+  state="$(json_field "$addon_info" state '')"
+  version_update_done="false"
+
+  if [ "$installed" != "true" ]; then
+    return 0
+  fi
+
+  if [ -n "$current" ] && [ "$current" != "null" ] && [ -n "$latest" ] && [ "$latest" != "null" ]; then
+    if [ "$current" != "$latest" ]; then
+      update_available="true"
+    fi
+  fi
+
+  if [ "$update_available" = "true" ]; then
+    backup="$(get_bool addon_update_backup false)"
+    update_payload="$(jq -n --argjson backup "$backup" '{backup: $backup, background: false}')"
+    log "${label}: add-on update beschikbaar: ${current:-onbekend} -> ${latest:-latest}."
+    if supervisor_curl POST "/store/addons/${addon_slug}/update" "$update_payload" >/dev/null; then
+      version_update_done="true"
+      try_supervisor_curl POST /addons/reload '{}' >/dev/null
+      restart_agent_after_addon_change "$addon_slug" "$label" "$state"
+    elif supervisor_curl POST "/addons/${addon_slug}/update" '{}' >/dev/null; then
+      version_update_done="true"
+      try_supervisor_curl POST /addons/reload '{}' >/dev/null
+      restart_agent_after_addon_change "$addon_slug" "$label" "$state"
+    else
+      log "${label}: add-on update endpoint faalde."
+    fi
+  else
+    log "${label}: add-on versie actueel (${current:-onbekend})."
+  fi
+
+  rebuild_addon_if_repo_source_changed "$addon_slug" "$base_slug" "$label" "$source_root" "$state" "$version_update_done" || true
+}
+
 ensure_addon_installed() {
   local base_slug="$1"
   local label="$2"
+  local source_root="${3-}"
 
-  local addon_slug addon_info installed update_available
+  local addon_slug addon_info installed current latest
   addon_slug="$(find_addon_slug "$base_slug" || true)"
   if [ -z "$addon_slug" ] || [ "$addon_slug" = "null" ]; then
     log "${label}: add-on niet gevonden in /addons. Controleer of deze repo in de Add-on Store is toegevoegd."
@@ -269,8 +406,9 @@ ensure_addon_installed() {
 
   log "${label}: slug gevonden: ${addon_slug}"
   addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info")"
-  installed="$(printf '%s' "$addon_info" | jq -r '.installed // .data.installed // false')"
-  update_available="$(printf '%s' "$addon_info" | jq -r '.update_available // .data.update_available // false')"
+  installed="$(json_field "$addon_info" installed false)"
+  current="$(json_field "$addon_info" version '')"
+  latest="$(json_field "$addon_info" version_latest '')"
 
   if [ "$installed" != "true" ]; then
     log "${label}: installeren via Store API."
@@ -278,15 +416,11 @@ ensure_addon_installed() {
       log "${label}: Store API install faalde; fallback naar /addons/${addon_slug}/install."
       supervisor_curl POST "/addons/${addon_slug}/install" '{}' >/dev/null
     fi
-  elif [ "$update_available" = "true" ]; then
-    log "${label}: update beschikbaar, uitvoeren."
-    supervisor_curl POST "/store/addons/${addon_slug}/update" '{"backup": false, "background": false}' >/dev/null \
-      || supervisor_curl POST "/addons/${addon_slug}/update" '{}' >/dev/null \
-      || true
   else
-    log "${label}: is al geïnstalleerd en actueel."
+    log "${label}: geïnstalleerd (${current:-onbekend}, latest=${latest:-onbekend})."
   fi
 
+  update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
   printf '%s' "$addon_slug"
 }
 
@@ -524,36 +658,37 @@ configure_installer_self_update() {
 }
 
 install_or_configure_agents() {
+  local source_root="${1-}"
   [ "$(get_bool install_agent_addons true)" = "true" ] || return 0
   ensure_store_reloaded
   configure_installer_self_update
 
   if should_handle goodwe; then
     local goodwe_slug
-    goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent' || true)"
+    goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent / BMS' "$source_root" || true)"
     if [ -n "$goodwe_slug" ]; then
-      set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent"
+      set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent / BMS"
       configure_goodwe_agent "$goodwe_slug"
-      start_addon_if_requested "$goodwe_slug" "GoodWe Agent"
+      start_addon_if_requested "$goodwe_slug" "GoodWe Agent / BMS"
     fi
   fi
 
   if should_handle solaredge; then
     local se_slug
-    se_slug="$(ensure_addon_installed solaredge_agent 'SolarEdge Agent' || true)"
+    se_slug="$(ensure_addon_installed solaredge_agent 'SolarEdge Agent / BMS' "$source_root" || true)"
     if [ -z "$se_slug" ]; then
-      se_slug="$(ensure_addon_installed metdezon_bms_agent 'SolarEdge Agent' || true)"
+      se_slug="$(ensure_addon_installed metdezon_bms_agent 'SolarEdge Agent / BMS' "$source_root" || true)"
     fi
     if [ -n "$se_slug" ]; then
-      set_addon_boot_auto_update "$se_slug" "SolarEdge Agent"
+      set_addon_boot_auto_update "$se_slug" "SolarEdge Agent / BMS"
       configure_solaredge_agent "$se_slug"
-      start_addon_if_requested "$se_slug" "SolarEdge Agent"
+      start_addon_if_requested "$se_slug" "SolarEdge Agent / BMS"
     fi
   fi
 
   if should_handle other; then
     local dwars_slug
-    dwars_slug="$(ensure_addon_installed dwars_addon 'DWARS Generic EMS Add-on' || true)"
+    dwars_slug="$(ensure_addon_installed dwars_addon 'DWARS Generic EMS Add-on' "$source_root" || true)"
     if [ -n "$dwars_slug" ]; then
       set_addon_boot_auto_update "$dwars_slug" "DWARS Generic EMS Add-on"
       configure_dwars_addon "$dwars_slug"
@@ -586,7 +721,7 @@ run_install_cycle() {
     fi
   fi
 
-  install_or_configure_agents
+  install_or_configure_agents "$source_root"
 
   if [ "$components_changed" = "true" ] && [ "$(get_bool restart_homeassistant_after_custom_component true)" = "true" ]; then
     restart_homeassistant_core
@@ -607,7 +742,7 @@ main() {
   if [ "$(get_bool watch_for_embedded_updates true)" = "true" ] || [ "$(get_bool auto_update_from_github false)" = "true" ]; then
     local interval
     interval="$(get_opt update_check_interval_sec 21600)"
-    log "Updater blijft actief en controleert iedere ${interval}s op custom component wijzigingen."
+    log "Updater blijft actief en controleert iedere ${interval}s op custom component én agent add-on wijzigingen."
     while true; do
       sleep "$interval"
       run_install_cycle || log "Update cycle gaf een fout; volgende interval probeert opnieuw."
