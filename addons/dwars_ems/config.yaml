@@ -1,0 +1,14 @@
+name: DWARS EMS
+version: "0.1.0"
+slug: dwars_ems
+description: DWARS EMS Controller
+startup: services
+boot: auto
+host_network: true
+init: false
+
+options:
+  api_url: "https://api.metdezon.nl/bms/api/next_action.php"
+
+schema:
+  api_url: str
