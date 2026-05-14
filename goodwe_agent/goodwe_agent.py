@@ -103,6 +103,22 @@ GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE = os.environ.get("HA_GRID_EXPORT_LIMIT_SW
 PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get("HA_PV_CURTAIL_BELOW_EUR_KWH", "")
 PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
 
+# Charge block / high export protection.
+# When the configured sensor goes below the trigger threshold, charge modes are
+# blocked for at least the configured duration and until the sensor is above
+# the release threshold again.
+CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
+CHARGE_BLOCK_SENSOR = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "sensor.goodwe_active_power_total")
+CHARGE_BLOCK_TRIGGER_BELOW_W_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "-13000")
+CHARGE_BLOCK_RELEASE_ABOVE_W_RAW = os.environ.get("HA_CHARGE_BLOCK_RELEASE_ABOVE_W", "-8000")
+CHARGE_BLOCK_DURATION_SEC_RAW = os.environ.get("HA_CHARGE_BLOCK_DURATION_SEC", "300")
+CHARGE_BLOCK_MODES_RAW = os.environ.get("HA_CHARGE_BLOCK_MODES", "3")
+CHARGE_BLOCK_FALLBACK_OPTION = (
+    os.environ.get("HA_CHARGE_BLOCK_FALLBACK_OPTION")
+    or os.environ.get("HA_EMS_MODE_0_OPTION")
+    or "auto"
+)
+
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
 
 
@@ -157,7 +173,7 @@ def normalize_key(value: Any) -> str:
     return text.strip("_")
 
 
-def parse_int_set(raw: str) -> set[int]:
+def parse_int_set(raw: str, label: str = "mode list") -> set[int]:
     out: set[int] = set()
     for part in re.split(r"[,;\s]+", str(raw or "")):
         part = part.strip()
@@ -166,11 +182,26 @@ def parse_int_set(raw: str) -> set[int]:
         try:
             out.add(int(part))
         except Exception:
-            log(f"WARN: invalid mode number in HA_EMS_SET_POWER_MODES: {part!r}")
+            log(f"WARN: invalid mode number in {label}: {part!r}")
     return out
 
 
-EMS_SET_POWER_MODES = parse_int_set(EMS_SET_POWER_MODES_RAW)
+EMS_SET_POWER_MODES = parse_int_set(EMS_SET_POWER_MODES_RAW, "HA_EMS_SET_POWER_MODES")
+CHARGE_BLOCK_TRIGGER_BELOW_W = parse_float(CHARGE_BLOCK_TRIGGER_BELOW_W_RAW)
+if CHARGE_BLOCK_TRIGGER_BELOW_W is None:
+    CHARGE_BLOCK_TRIGGER_BELOW_W = -13000.0
+
+CHARGE_BLOCK_RELEASE_ABOVE_W = parse_float(CHARGE_BLOCK_RELEASE_ABOVE_W_RAW)
+if CHARGE_BLOCK_RELEASE_ABOVE_W is None:
+    CHARGE_BLOCK_RELEASE_ABOVE_W = -8000.0
+
+CHARGE_BLOCK_DURATION_SEC = max(0, parse_int(CHARGE_BLOCK_DURATION_SEC_RAW, default=300))
+CHARGE_BLOCK_MODES = parse_int_set(CHARGE_BLOCK_MODES_RAW, "HA_CHARGE_BLOCK_MODES")
+if not CHARGE_BLOCK_MODES:
+    CHARGE_BLOCK_MODES = {3}
+
+charge_block_active = False
+charge_block_until_ts = 0.0
 
 
 # ========================
@@ -428,6 +459,99 @@ def ha_set_switch(entity_id: str, desired_state: str) -> bool:
 # HA GoodWe EMS control
 # ========================
 
+def read_charge_block_sensor() -> float | None:
+    """Read the configured charge-block sensor from Home Assistant."""
+    entity_id = str(CHARGE_BLOCK_SENSOR or "").strip()
+    if not entity_id:
+        return None
+
+    state = ha_get_state(entity_id)
+    if not state:
+        if DEBUG:
+            log(f"Charge block: sensor {entity_id} unavailable")
+        return None
+
+    value = parse_float(state.get("state"))
+    if value is None and DEBUG:
+        log(f"Charge block: sensor {entity_id} has non-numeric state {state.get('state')!r}")
+    return value
+
+
+def update_charge_block_state() -> tuple[bool, float | None, str]:
+    """Update and return the charge-block latch state.
+
+    The block is triggered when the sensor is below CHARGE_BLOCK_TRIGGER_BELOW_W.
+    Once active, it is only released when both conditions are true:
+    - the minimum block duration has elapsed
+    - the sensor is above CHARGE_BLOCK_RELEASE_ABOVE_W
+    """
+    global charge_block_active, charge_block_until_ts
+
+    if not CHARGE_BLOCK_ENABLED:
+        if charge_block_active:
+            log("Charge block disabled by configuration; releasing active block")
+        charge_block_active = False
+        charge_block_until_ts = 0.0
+        return False, None, "disabled"
+
+    sensor_value = read_charge_block_sensor()
+    now = time.time()
+
+    if sensor_value is None:
+        if charge_block_active:
+            remaining = max(0, int(round(charge_block_until_ts - now)))
+            if DEBUG:
+                log(f"Charge block remains active: sensor unavailable, min_remaining={remaining}s")
+            return True, None, "sensor_unavailable_keep_active"
+        return False, None, "sensor_unavailable"
+
+    was_active = charge_block_active
+
+    if sensor_value < CHARGE_BLOCK_TRIGGER_BELOW_W:
+        charge_block_active = True
+        charge_block_until_ts = max(charge_block_until_ts, now + CHARGE_BLOCK_DURATION_SEC)
+        if not was_active:
+            log(
+                "Charge block ACTIVE: "
+                f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W is below {CHARGE_BLOCK_TRIGGER_BELOW_W:g}W; "
+                f"charging blocked for at least {CHARGE_BLOCK_DURATION_SEC}s and until above "
+                f"{CHARGE_BLOCK_RELEASE_ABOVE_W:g}W"
+            )
+        elif DEBUG:
+            remaining = max(0, int(round(charge_block_until_ts - now)))
+            log(
+                "Charge block still active: "
+                f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W below trigger, min_remaining={remaining}s"
+            )
+        return True, sensor_value, "trigger"
+
+    if not charge_block_active:
+        return False, sensor_value, "inactive"
+
+    min_duration_done = now >= charge_block_until_ts
+    release_threshold_done = sensor_value > CHARGE_BLOCK_RELEASE_ABOVE_W
+
+    if min_duration_done and release_threshold_done:
+        charge_block_active = False
+        charge_block_until_ts = 0.0
+        log(
+            "Charge block RELEASED: "
+            f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W is above {CHARGE_BLOCK_RELEASE_ABOVE_W:g}W "
+            "and minimum block duration has elapsed"
+        )
+        return False, sensor_value, "released"
+
+    remaining = max(0, int(round(charge_block_until_ts - now)))
+    if DEBUG:
+        reasons = []
+        if not min_duration_done:
+            reasons.append(f"min_remaining={remaining}s")
+        if not release_threshold_done:
+            reasons.append(f"sensor_not_above_release={sensor_value:g}W<={CHARGE_BLOCK_RELEASE_ABOVE_W:g}W")
+        log(f"Charge block remains active: {', '.join(reasons)}")
+    return True, sensor_value, "latched"
+
+
 def set_ems_power(server_mode: int, server_power: int) -> bool:
     if server_mode not in EMS_SET_POWER_MODES:
         return True
@@ -488,7 +612,21 @@ def apply_battery_control_from_home_assistant(server_mode: int, server_power: in
             log("HA battery control disabled; skip EMS mode")
         return False
 
-    option = EMS_MODE_OPTIONS.get(server_mode)
+    block_active, block_sensor_value, block_reason = update_charge_block_state()
+    charge_request_blocked = block_active and server_mode in CHARGE_BLOCK_MODES
+
+    if charge_request_blocked:
+        option = CHARGE_BLOCK_FALLBACK_OPTION
+        skip_power = True
+        log(
+            "Charge block: blocking charge request "
+            f"server_mode={server_mode}; sensor={block_sensor_value if block_sensor_value is not None else '?'}W; "
+            f"reason={block_reason}; forcing EMS option='{option}'"
+        )
+    else:
+        option = EMS_MODE_OPTIONS.get(server_mode)
+        skip_power = False
+
     if not option:
         log(f"Unknown server mode {server_mode}; no EMS option configured.")
         return False
@@ -499,11 +637,15 @@ def apply_battery_control_from_home_assistant(server_mode: int, server_power: in
         log("WARN: HA_EMS_MODE_SELECT is empty; cannot set EMS mode")
         return False
 
+    power_text = "skipped_by_charge_block" if skip_power else EMS_POWER_VALUE_SPEC
     log(
         f"Set EMS mode via HA: server_mode={server_mode} "
         f"option='{option}' selects={select_entities} power_numbers={power_entities} "
-        f"power_value='{EMS_POWER_VALUE_SPEC}' api_power={server_power if server_power > 0 else POWER}W"
+        f"power_value='{power_text}' api_power={server_power if server_power > 0 else POWER}W"
     )
+
+    if skip_power:
+        return set_ems_modes(option)
 
     if EMS_SET_POWER_BEFORE_MODE:
         ok_power = set_ems_power(server_mode, server_power)
@@ -513,7 +655,6 @@ def apply_battery_control_from_home_assistant(server_mode: int, server_power: in
         ok_power = set_ems_power(server_mode, server_power)
 
     return ok_power and ok_mode
-
 
 # ========================
 # Telemetry
@@ -741,6 +882,14 @@ def loop():
         f"restore={GRID_EXPORT_LIMIT_DEFAULT_VALUE} switch_curtail={GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE} "
         f"switch_restore={GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE} "
         f"threshold='{PV_CURTAIL_BELOW_EUR_KWH_ENV or 'api/default'}'"
+    )
+    log(
+        "Charge block: "
+        f"enabled={CHARGE_BLOCK_ENABLED} sensor='{CHARGE_BLOCK_SENSOR}' "
+        f"trigger_below={CHARGE_BLOCK_TRIGGER_BELOW_W:g}W "
+        f"release_above={CHARGE_BLOCK_RELEASE_ABOVE_W:g}W "
+        f"duration={CHARGE_BLOCK_DURATION_SEC}s modes={sorted(CHARGE_BLOCK_MODES)} "
+        f"fallback_option='{CHARGE_BLOCK_FALLBACK_OPTION}'"
     )
 
     while True:

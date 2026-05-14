@@ -98,6 +98,18 @@ HA_EMS_MODE_4_OPTION=$(get_opt "ha_ems_mode_4_option" "export_ac")
 HA_EMS_MODE_7_OPTION=$(get_opt "ha_ems_mode_7_option" "$HA_EMS_MODE_0_OPTION")
 
 # ============================================================
+# Charge block / high export protection
+# ============================================================
+
+HA_CHARGE_BLOCK_ENABLED=$(get_opt "ha_charge_block_enabled" "true")
+HA_CHARGE_BLOCK_SENSOR=$(get_opt "ha_charge_block_sensor" "sensor.goodwe_active_power_total")
+HA_CHARGE_BLOCK_BELOW_W=$(get_opt "ha_charge_block_below_w" "-13000")
+HA_CHARGE_BLOCK_RELEASE_ABOVE_W=$(get_opt "ha_charge_block_release_above_w" "-8000")
+HA_CHARGE_BLOCK_DURATION_SEC=$(get_opt "ha_charge_block_duration_sec" "300")
+HA_CHARGE_BLOCK_MODES=$(get_opt "ha_charge_block_modes" "3")
+HA_CHARGE_BLOCK_FALLBACK_OPTION=$(get_opt "ha_charge_block_fallback_option" "$HA_EMS_MODE_0_OPTION")
+
+# ============================================================
 # GoodWe PV/export curtailment via HA number/switch entities
 # ============================================================
 
@@ -134,6 +146,14 @@ export HA_EMS_MODE_3_OPTION
 export HA_EMS_MODE_4_OPTION
 export HA_EMS_MODE_7_OPTION
 
+export HA_CHARGE_BLOCK_ENABLED
+export HA_CHARGE_BLOCK_SENSOR
+export HA_CHARGE_BLOCK_BELOW_W
+export HA_CHARGE_BLOCK_RELEASE_ABOVE_W
+export HA_CHARGE_BLOCK_DURATION_SEC
+export HA_CHARGE_BLOCK_MODES
+export HA_CHARGE_BLOCK_FALLBACK_OPTION
+
 export HA_GRID_EXPORT_LIMIT_NUMBER
 export HA_GRID_EXPORT_LIMIT_SWITCH
 export HA_GRID_EXPORT_LIMIT_OFF_VALUE
@@ -162,6 +182,10 @@ printf '[GoodWe] Grid export curtailment: enabled=%s number_entities=%s switch_e
   "$HA_GRID_EXPORT_LIMIT_OFF_VALUE" "$HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE" \
   "$HA_GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE" "$HA_GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE" \
   "${HA_PV_CURTAIL_BELOW_EUR_KWH:-api/default}"
+printf '[GoodWe] Charge block: enabled=%s sensor=%s trigger_below=%sW release_above=%sW duration=%ss modes=%s fallback_option=%s\n' \
+  "$HA_CHARGE_BLOCK_ENABLED" "$HA_CHARGE_BLOCK_SENSOR" "$HA_CHARGE_BLOCK_BELOW_W" \
+  "$HA_CHARGE_BLOCK_RELEASE_ABOVE_W" "$HA_CHARGE_BLOCK_DURATION_SEC" \
+  "$HA_CHARGE_BLOCK_MODES" "$HA_CHARGE_BLOCK_FALLBACK_OPTION"
 
 # ============================================================
 # Start agent
