@@ -35,6 +35,25 @@ empty_if_null() {
   fi
 }
 
+# ============================================================
+# Add-on metadata + Home Assistant backup automation check
+# ============================================================
+
+ADDON_VERSION="unknown"
+ADDON_NAME="DWARS Generic"
+if [ -f /app/config.json ]; then
+  ADDON_VERSION="$(jq -r '.version // "unknown"' /app/config.json 2>/dev/null || echo "unknown")"
+  ADDON_NAME="$(jq -r '.name // "DWARS Generic"' /app/config.json 2>/dev/null || echo "DWARS Generic")"
+fi
+AGENT_TYPE="dwars"
+
+BACKUP_YAML_CHECK_ENABLED=$(get_opt "backup_yaml_check_enabled" "true")
+BACKUP_YAML_PATH=$(get_opt "backup_yaml_path" "/config/backup.yaml")
+BACKUP_YAML_OVERWRITE=$(get_opt "backup_yaml_overwrite" "false")
+
+export ADDON_VERSION ADDON_NAME AGENT_TYPE
+export BACKUP_YAML_CHECK_ENABLED BACKUP_YAML_PATH BACKUP_YAML_OVERWRITE
+
 API_URL=$(get_opt "api_url" "https://api.metdezon.nl/bms/api/next_action.php")
 TELEMETRY_URL=$(get_opt "telemetry_url" "https://api.metdezon.nl/bms/api/telemetry.php")
 API_KEY=$(get_opt "api_key" "")
@@ -109,5 +128,8 @@ printf '[DWARS Generic] Control: enabled=%s mode_select=%s idle=%s charge=%s dis
 printf '[DWARS Generic] Power: default_number=%s charge_number=%s discharge_number=%s idle_number=%s charge_value=%s discharge_value=%s idle_value=%s before_mode=%s\n' \
   "$HA_POWER_NUMBER" "$HA_CHARGE_POWER_NUMBER" "$HA_DISCHARGE_POWER_NUMBER" "$HA_IDLE_POWER_NUMBER" \
   "$HA_CHARGE_POWER_VALUE" "$HA_DISCHARGE_POWER_VALUE" "$HA_IDLE_POWER_VALUE" "$HA_SET_POWER_BEFORE_MODE"
+
+printf '[DWARS Generic] Add-on metadata: name=%s version=%s type=%s backup_yaml_check=%s path=%s overwrite=%s\n' \
+  "$ADDON_NAME" "$ADDON_VERSION" "$AGENT_TYPE" "$BACKUP_YAML_CHECK_ENABLED" "$BACKUP_YAML_PATH" "$BACKUP_YAML_OVERWRITE"
 
 exec python3 /app/dwars_agent.py

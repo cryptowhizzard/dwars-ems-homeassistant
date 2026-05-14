@@ -36,6 +36,13 @@ TEL_URL = os.environ.get("TELEMETRY_URL", "https://api.metdezon.nl/bms/api/telem
 INTERVAL = int(os.environ.get("INTERVAL", "60"))
 POWER = int(os.environ.get("POWER", "5000"))
 VERIFY_SSL = env_bool("VERIFY_SSL", True)
+
+AGENT_NAME = os.environ.get("ADDON_NAME", "GoodWe Agent")
+AGENT_VERSION = os.environ.get("ADDON_VERSION", "unknown")
+AGENT_TYPE = os.environ.get("AGENT_TYPE", "goodwe")
+BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", True)
+BACKUP_YAML_PATH = os.environ.get("BACKUP_YAML_PATH", "/config/backup.yaml")
+BACKUP_YAML_OVERWRITE = env_bool("BACKUP_YAML_OVERWRITE", False)
 DEBUG = env_bool("DEBUG", False)
 
 # Telemetry entities
@@ -120,6 +127,94 @@ CHARGE_BLOCK_FALLBACK_OPTION = (
 )
 
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
+
+
+BACKUP_YAML_CONTENT = """- alias: Auto update everything
+  description: Automatically install updates
+  trigger:
+    - platform: time
+      at: "03:00:00"
+
+  action:
+    - service: backup.create_automatic
+
+    - delay: "00:02:00"
+
+    - service: update.install
+      target:
+        entity_id: all
+
+  mode: single
+"""
+
+
+def truthy_text(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on", "ja", "aan")
+
+
+def backup_yaml_content_ok(content: str) -> bool:
+    required = (
+        "alias: Auto update everything",
+        "backup.create_automatic",
+        "update.install",
+        "entity_id: all",
+    )
+    return all(marker in content for marker in required)
+
+
+def ensure_backup_yaml() -> dict[str, Any]:
+    """Ensure /config/backup.yaml contains the DWARS auto-update automation."""
+    path = str(BACKUP_YAML_PATH or "/config/backup.yaml").strip() or "/config/backup.yaml"
+    status: dict[str, Any] = {
+        "backup_yaml_path": path,
+        "backup_yaml_ok": None,
+        "backup_yaml_updated_at": None,
+    }
+
+    if not BACKUP_YAML_CHECK_ENABLED:
+        return status
+
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        changed = False
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                current = handle.read()
+
+            if backup_yaml_content_ok(current):
+                status["backup_yaml_ok"] = True
+            else:
+                if BACKUP_YAML_OVERWRITE:
+                    new_content = BACKUP_YAML_CONTENT
+                else:
+                    separator = "\n\n# DWARS auto update automation\n"
+                    new_content = current.rstrip() + separator + BACKUP_YAML_CONTENT
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(new_content)
+                changed = True
+                status["backup_yaml_ok"] = True
+        else:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(BACKUP_YAML_CONTENT)
+            changed = True
+            status["backup_yaml_ok"] = True
+
+        mtime = int(os.path.getmtime(path)) if os.path.exists(path) else int(time.time())
+        status["backup_yaml_updated_at"] = int(time.time()) if changed else mtime
+        if changed:
+            log(f"backup.yaml ensured at {path}")
+    except Exception as exc:
+        status["backup_yaml_ok"] = False
+        status["backup_yaml_error"] = str(exc)
+        log(f"WARN: backup.yaml check failed for {path}: {exc}")
+
+    return status
+
 
 
 # ========================
@@ -276,6 +371,24 @@ def ha_call_service(domain: str, service: str, payload: dict[str, Any]) -> bool:
 # ========================
 # HA entity helpers
 # ========================
+
+def ha_get_config_version() -> str | None:
+    headers = ha_headers()
+    if headers is None:
+        return None
+    try:
+        response = requests.get(f"{ha_base_url()}/config", headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, dict) and data.get("version"):
+                return str(data.get("version"))
+        if DEBUG:
+            log(f"HA config version -> {response.status_code} {response.text[:200]}")
+    except Exception as exc:
+        if DEBUG:
+            log(f"HA config version error: {exc}")
+    return None
+
 
 def number_entity_attrs(entity_id: str) -> dict[str, Any]:
     state = ha_get_state(entity_id)
@@ -867,6 +980,7 @@ def apply_grid_export_limit_from_action(data: dict[str, Any]):
 def loop():
     token_present = bool(get_ha_token())
     log(f"Agent up. verify_ssl={VERIFY_SSL} debug={DEBUG}")
+    log(f"Agent metadata: name={AGENT_NAME} version={AGENT_VERSION} type={AGENT_TYPE}")
     log(f"HA_URL={ha_base_url()} token_present={token_present} disable_ha={DISABLE_HA}")
     log(
         "HA battery control: "
@@ -921,9 +1035,19 @@ def loop():
                 if "grid_power_w" in telemetry:
                     log(f"Grid power from HA: {telemetry['grid_power_w']} W")
 
+            backup_status = ensure_backup_yaml()
+            ha_version = ha_get_config_version()
+
             heartbeat = {
                 "client_id": CLIENT_ID or None,
                 "reported_at": int(time.time()),
+                "agent_name": AGENT_NAME,
+                "agent_type": AGENT_TYPE,
+                "agent_version": AGENT_VERSION,
+                "ha_version": ha_version,
+                "backup_yaml_ok": backup_status.get("backup_yaml_ok"),
+                "backup_yaml_path": backup_status.get("backup_yaml_path"),
+                "backup_yaml_updated_at": backup_status.get("backup_yaml_updated_at"),
                 "soc": float(telemetry["soc_pct"]) if telemetry and "soc_pct" in telemetry else None,
                 "battery_mode": server_mode,
                 "pv_power_w": telemetry.get("pv_power_w") if telemetry else None,

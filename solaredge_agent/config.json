@@ -1,6 +1,6 @@
 {
   "name": "DWARS SolarEdge Agent",
-  "version": "3.4.2",
+  "version": "3.4.3",
   "slug": "solaredge_agent",
   "description": "Stuurt SolarEdge BMS/EMS aan via centrale API en Home Assistant select/number entities. Ondersteunt meerdere omvormers, SolarEdge optie-aliases, PV-curtailment en entity auto-discovery.",
   "arch": [
@@ -42,7 +42,10 @@
     "ha_pv_active_power_limit_default_percent": 65,
     "ha_pv_active_power_limit_off_percent": 0,
     "ha_pv_curtail_below_eur_kwh": -0.12,
-    "ha_pv_curtail_enabled": true
+    "ha_pv_curtail_enabled": true,
+    "backup_yaml_check_enabled": true,
+    "backup_yaml_path": "/config/backup.yaml",
+    "backup_yaml_overwrite": false
   },
   "schema": {
     "api_key": "str?",
@@ -69,7 +72,10 @@
     "ha_pv_active_power_limit_default_percent": "float",
     "ha_pv_active_power_limit_off_percent": "float",
     "ha_pv_curtail_below_eur_kwh": "float?",
-    "ha_pv_curtail_enabled": "bool"
+    "ha_pv_curtail_enabled": "bool",
+    "backup_yaml_check_enabled": "bool",
+    "backup_yaml_path": "str",
+    "backup_yaml_overwrite": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",

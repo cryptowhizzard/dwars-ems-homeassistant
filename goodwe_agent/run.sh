@@ -33,6 +33,25 @@ get_opt() {
 }
 
 # ============================================================
+# Add-on metadata + Home Assistant backup automation check
+# ============================================================
+
+ADDON_VERSION="unknown"
+ADDON_NAME="GoodWe"
+if [ -f /app/config.json ]; then
+  ADDON_VERSION="$(jq -r '.version // "unknown"' /app/config.json 2>/dev/null || echo "unknown")"
+  ADDON_NAME="$(jq -r '.name // "GoodWe"' /app/config.json 2>/dev/null || echo "GoodWe")"
+fi
+AGENT_TYPE="goodwe"
+
+BACKUP_YAML_CHECK_ENABLED=$(get_opt "backup_yaml_check_enabled" "true")
+BACKUP_YAML_PATH=$(get_opt "backup_yaml_path" "/config/backup.yaml")
+BACKUP_YAML_OVERWRITE=$(get_opt "backup_yaml_overwrite" "false")
+
+export ADDON_VERSION ADDON_NAME AGENT_TYPE
+export BACKUP_YAML_CHECK_ENABLED BACKUP_YAML_PATH BACKUP_YAML_OVERWRITE
+
+# ============================================================
 # External BMS / MetDeZon API
 # ============================================================
 
@@ -186,6 +205,9 @@ printf '[GoodWe] Charge block: enabled=%s sensor=%s trigger_below=%sW release_ab
   "$HA_CHARGE_BLOCK_ENABLED" "$HA_CHARGE_BLOCK_SENSOR" "$HA_CHARGE_BLOCK_BELOW_W" \
   "$HA_CHARGE_BLOCK_RELEASE_ABOVE_W" "$HA_CHARGE_BLOCK_DURATION_SEC" \
   "$HA_CHARGE_BLOCK_MODES" "$HA_CHARGE_BLOCK_FALLBACK_OPTION"
+
+printf '[GoodWe] Add-on metadata: name=%s version=%s type=%s backup_yaml_check=%s path=%s overwrite=%s\n' \
+  "$ADDON_NAME" "$ADDON_VERSION" "$AGENT_TYPE" "$BACKUP_YAML_CHECK_ENABLED" "$BACKUP_YAML_PATH" "$BACKUP_YAML_OVERWRITE"
 
 # ============================================================
 # Start agent

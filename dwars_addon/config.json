@@ -1,6 +1,6 @@
 {
   "name": "DWARS Generic EMS Add-on",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "slug": "dwars_addon",
   "description": "Generieke DWARS EMS bridge voor andere omvormers. Stuurt zelf gekozen Home Assistant entities aan met configureerbare mode mapping.",
   "startup": "services",
@@ -46,7 +46,10 @@
     "ha_charge_power_value": "server_power",
     "ha_discharge_power_value": "server_power",
     "ha_idle_power_value": "skip",
-    "ha_set_power_before_mode": true
+    "ha_set_power_before_mode": true,
+    "backup_yaml_check_enabled": true,
+    "backup_yaml_path": "/config/backup.yaml",
+    "backup_yaml_overwrite": false
   },
   "schema": {
     "api_url": "str",
@@ -79,7 +82,10 @@
     "ha_charge_power_value": "str?",
     "ha_discharge_power_value": "str?",
     "ha_idle_power_value": "str?",
-    "ha_set_power_before_mode": "bool"
+    "ha_set_power_before_mode": "bool",
+    "backup_yaml_check_enabled": "bool",
+    "backup_yaml_path": "str",
+    "backup_yaml_overwrite": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
@@ -87,5 +93,8 @@
     "armv7": "ghcr.io/home-assistant/armv7-base:3.19"
   },
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_addon",
-  "hassio_role": "default"
+  "hassio_role": "default",
+  "map": [
+    "config:rw"
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.5.26",
+  "version": "1.5.28",
   "slug": "goodwe_agent",
   "description": "Bridge central server mode voor GoodWe. Stuurt GoodWe EMS mode via Home Assistant select/number/switch entities in plaats van Modbus, inclusief multi-inverter support voor EMS mode, power en grid export curtailment.",
   "startup": "services",
@@ -54,7 +54,10 @@
     "ha_grid_export_limit_switch_curtail_state": "on",
     "ha_grid_export_limit_switch_restore_state": "off",
     "ha_pv_curtail_below_eur_kwh": "",
-    "ha_pv_curtail_enabled": true
+    "ha_pv_curtail_enabled": true,
+    "backup_yaml_check_enabled": true,
+    "backup_yaml_path": "/config/backup.yaml",
+    "backup_yaml_overwrite": false
   },
   "schema": {
     "api_url": "str",
@@ -95,7 +98,10 @@
     "ha_grid_export_limit_switch_curtail_state": "str?",
     "ha_grid_export_limit_switch_restore_state": "str?",
     "ha_pv_curtail_below_eur_kwh": "str?",
-    "ha_pv_curtail_enabled": "bool"
+    "ha_pv_curtail_enabled": "bool",
+    "backup_yaml_check_enabled": "bool",
+    "backup_yaml_path": "str",
+    "backup_yaml_overwrite": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
@@ -103,5 +109,8 @@
     "armv7": "ghcr.io/home-assistant/armv7-base:3.19"
   },
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/goodwe_agent",
-  "hassio_role": "default"
+  "hassio_role": "default",
+  "map": [
+    "config:rw"
+  ]
 }

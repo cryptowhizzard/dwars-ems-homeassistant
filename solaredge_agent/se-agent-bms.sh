@@ -28,6 +28,13 @@ TEL_URL="${TEL_URL:-https://api.metdezon.nl/bms/api/heartbeat.php}"
 DEBUG="${DEBUG:-0}"
 VERIFY_SSL="${VERIFY_SSL:-true}"
 
+AGENT_NAME="${ADDON_NAME:-DWARS SolarEdge Agent}"
+AGENT_VERSION="${ADDON_VERSION:-unknown}"
+AGENT_TYPE="${AGENT_TYPE:-solaredge}"
+BACKUP_YAML_PATH="${BACKUP_YAML_PATH:-/config/backup.yaml}"
+BACKUP_YAML_OK="${BACKUP_YAML_OK:-}"
+BACKUP_YAML_UPDATED_AT="${BACKUP_YAML_UPDATED_AT:-}"
+
 HASS_URL="${HASS_URL:-http://supervisor/core}"
 HA_SOC_SENSOR="${HA_SOC_SENSOR:-sensor.solaredge_storage_level}"
 HA_PV_SENSOR="${HA_PV_SENSOR:-sensor.solaredge_zonne_energie}"
@@ -89,6 +96,13 @@ ha_get_all_states() {
     -H "Authorization: Bearer $HA_TOKEN" \
     -H "Content-Type: application/json" \
     "$HASS_URL/api/states"
+}
+
+ha_config_version() {
+  curl -sS "${CURL_TLS[@]}" \
+    -H "Authorization: Bearer $HA_TOKEN" \
+    -H "Content-Type: application/json" \
+    "$HASS_URL/api/config" | jq -r '.version // empty' 2>/dev/null || true
 }
 
 ALL_STATES_CACHE=""
@@ -942,13 +956,34 @@ for ((idx=0; idx<INVERTER_COUNT; idx++)); do
 log "HA state: SOC=${SOC_SHOW}% cmd_modes=[${CMD_MODES_PRETTY[*]}] PV=${PV_AC_W:-n/a}W GRID=${GRID_W:-n/a}W"
 
 # ================= 2) Heartbeat =================
+HA_VERSION="$(ha_config_version || true)"
 HB_JSON="$(jq -n \
   --argjson cid "$CLIENT_ID" \
   --argjson ts "$(date +%s)" \
   --arg soc "${SOC_VAL:-}" \
   --arg pvac "${PV_AC_W:-}" \
   --arg grid "${GRID_W:-}" \
-  '{client_id:$cid,reported_at:$ts,soc:(($soc|tonumber?)),pv_power_w:(($pvac|tonumber?)),grid_power_w:(($grid|tonumber?))}'
+  --arg agent_name "$AGENT_NAME" \
+  --arg agent_type "$AGENT_TYPE" \
+  --arg agent_version "$AGENT_VERSION" \
+  --arg ha_version "${HA_VERSION:-}" \
+  --arg backup_ok "${BACKUP_YAML_OK:-}" \
+  --arg backup_path "${BACKUP_YAML_PATH:-}" \
+  --arg backup_updated_at "${BACKUP_YAML_UPDATED_AT:-}" \
+  '{
+    client_id:$cid,
+    reported_at:$ts,
+    agent_name:$agent_name,
+    agent_type:$agent_type,
+    agent_version:$agent_version,
+    ha_version:(if $ha_version == "" then null else $ha_version end),
+    backup_yaml_ok:(if $backup_ok == "" then null elif (($backup_ok|ascii_downcase) == "true" or $backup_ok == "1") then true else false end),
+    backup_yaml_path:(if $backup_path == "" then null else $backup_path end),
+    backup_yaml_updated_at:(($backup_updated_at|tonumber?)),
+    soc:(($soc|tonumber?)),
+    pv_power_w:(($pvac|tonumber?)),
+    grid_power_w:(($grid|tonumber?))
+  }'
 )"
 
 CURL_ARGS=(-sS "${CURL_TLS[@]}" -H "Content-Type: application/json")

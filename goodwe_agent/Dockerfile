@@ -1,5 +1,5 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=1.5.22
+ARG BUILD_VERSION=1.5.28
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
@@ -30,4 +30,3 @@ COPY config.json /app/config.json
 RUN chmod +x /app/run.sh
 
 CMD [ "/app/run.sh" ]
-
