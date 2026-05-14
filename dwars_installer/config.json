@@ -1,6 +1,6 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "slug": "dwars_installer",
   "description": "Installeert en update DWARS custom components en inverter agents voor GoodWe, SolarEdge of een andere omvormer vanuit één repository.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",

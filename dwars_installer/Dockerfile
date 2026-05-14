@@ -1,5 +1,5 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=0.3.0
+ARG BUILD_VERSION=0.3.1
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
@@ -25,7 +25,7 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 COPY run.sh /app/run.sh
-COPY payload /app/payload
+RUN mkdir -p /app/payload
 RUN chmod +x /app/run.sh
 
 CMD [ "/app/run.sh" ]

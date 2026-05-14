@@ -105,20 +105,36 @@ dir_hash() {
   ) | sha256sum | awk '{print $1}'
 }
 
-prepare_payload_source() {
-  local remote_enabled zip_url zip_file extract_dir top_dir
-  remote_enabled="$(get_bool auto_update_from_github false)"
+custom_components_required() {
+  [ "$(get_bool install_custom_components true)" = "true" ] || return 1
 
-  if [ "$remote_enabled" != "true" ]; then
-    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
+  if should_handle goodwe || should_handle solaredge; then
     return 0
   fi
 
+  return 1
+}
+
+local_payload_has_required_components() {
+  local root="$1"
+
+  if should_handle goodwe && [ ! -d "${root}/custom_components/goodwe" ]; then
+    return 1
+  fi
+
+  if should_handle solaredge && [ ! -d "${root}/custom_components/solaredge_modbus_multi" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+download_repo_payload_source() {
+  local zip_url zip_file extract_dir top_dir
+
   zip_url="$(get_opt github_repo_zip_url '')"
   if [ -z "$zip_url" ] || [ "$zip_url" = "null" ]; then
-    log "auto_update_from_github=true maar github_repo_zip_url is leeg; embedded payload wordt gebruikt."
-    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
-    return 0
+    return 1
   fi
 
   rm -rf "$WORK_DIR"
@@ -126,28 +142,66 @@ prepare_payload_source() {
   zip_file="${WORK_DIR}/repo.zip"
   extract_dir="${WORK_DIR}/repo"
 
-  log "Remote repo-ZIP downloaden voor custom component update."
+  log "Remote repo-ZIP downloaden voor custom component payload."
   if ! curl -fsSL "$zip_url" -o "$zip_file"; then
-    log "Download mislukt; embedded payload wordt gebruikt."
-    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
-    return 0
+    log "Remote download mislukt: ${zip_url}"
+    return 1
   fi
 
   mkdir -p "$extract_dir"
   if ! unzip -q "$zip_file" -d "$extract_dir"; then
-    log "Unzip mislukt; embedded payload wordt gebruikt."
-    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
-    return 0
+    log "Remote ZIP uitpakken mislukt."
+    return 1
   fi
 
   top_dir="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
   if [ -z "$top_dir" ] || [ ! -d "${top_dir}/custom_components" ]; then
-    log "Remote ZIP bevat geen custom_components; embedded payload wordt gebruikt."
+    log "Remote ZIP bevat geen custom_components map."
+    return 1
+  fi
+
+  printf '%s\n' "$top_dir"
+}
+
+prepare_payload_source() {
+  local remote_enabled remote_root
+  remote_enabled="$(get_bool auto_update_from_github false)"
+
+  mkdir -p "$LOCAL_PAYLOAD_DIR"
+
+  # Bij inverter_type=andere_omvormer worden geen custom_components geïnstalleerd.
+  # Dan is een lege /app/payload voldoende en hoeft de Docker build geen payload-map te bevatten.
+  if ! custom_components_required; then
     printf '%s\n' "$LOCAL_PAYLOAD_DIR"
     return 0
   fi
 
-  printf '%s\n' "$top_dir"
+  if [ "$remote_enabled" != "true" ] && local_payload_has_required_components "$LOCAL_PAYLOAD_DIR"; then
+    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
+    return 0
+  fi
+
+  if [ "$remote_enabled" = "true" ]; then
+    log "auto_update_from_github=true; remote payload wordt gebruikt."
+  else
+    log "Embedded payload ontbreekt of is incompleet; remote repo-ZIP wordt als fallback gebruikt."
+  fi
+
+  if remote_root="$(download_repo_payload_source)"; then
+    if local_payload_has_required_components "$remote_root"; then
+      printf '%s\n' "$remote_root"
+      return 0
+    fi
+    log "Remote payload mist één of meer geselecteerde custom components."
+  fi
+
+  if local_payload_has_required_components "$LOCAL_PAYLOAD_DIR"; then
+    log "Remote payload niet bruikbaar; embedded payload wordt gebruikt."
+    printf '%s\n' "$LOCAL_PAYLOAD_DIR"
+    return 0
+  fi
+
+  fail "Geen bruikbare custom component payload gevonden. Zet auto_update_from_github=true of voeg custom_components/goodwe en/of custom_components/solaredge_modbus_multi toe aan de repo."
 }
 
 install_custom_component() {
