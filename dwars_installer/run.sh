@@ -44,7 +44,20 @@ should_handle() {
   local wanted="$1"
   local selected
   selected="$(selected_inverter_type)"
-  [ "$selected" = "both" ] || [ "$selected" = "$wanted" ]
+
+  case "$selected" in
+    both)
+      # 'both' betekent GoodWe + SolarEdge. De generieke DWARS add-on wordt
+      # alleen geïnstalleerd bij inverter_type=andere_omvormer.
+      [ "$wanted" = "goodwe" ] || [ "$wanted" = "solaredge" ]
+      ;;
+    other|andere|andere_omvormer)
+      [ "$wanted" = "other" ]
+      ;;
+    *)
+      [ "$selected" = "$wanted" ]
+      ;;
+  esac
 }
 
 supervisor_curl() {
@@ -358,6 +371,82 @@ configure_solaredge_agent() {
   supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
 }
 
+configure_dwars_addon() {
+  local addon_slug="$1"
+  [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
+
+  local options_payload
+  options_payload="$(jq -n \
+    --arg api_url "$(get_opt dwars_addon_api_url 'https://api.metdezon.nl/bms/api/next_action.php')" \
+    --arg telemetry_url "$(get_opt dwars_addon_telemetry_url 'https://api.metdezon.nl/bms/api/telemetry.php')" \
+    --arg api_key "$(get_opt dwars_addon_api_key '')" \
+    --arg client_id "$(get_opt dwars_addon_client_id '')" \
+    --argjson poll_interval "$(get_opt dwars_addon_poll_interval 60)" \
+    --argjson power_watt "$(get_opt dwars_addon_power_watt 5000)" \
+    --argjson debug "$(get_bool dwars_addon_debug true)" \
+    --arg soc_entity "$(get_opt dwars_addon_soc_entity '')" \
+    --arg pv_entity "$(get_opt dwars_addon_pv_entity '')" \
+    --arg grid_entity "$(get_opt dwars_addon_grid_entity '')" \
+    --arg battery_power_entity "$(get_opt dwars_addon_battery_power_entity '')" \
+    --arg inverter_mode_entity "$(get_opt dwars_addon_inverter_mode_entity '')" \
+    --arg mode_select "$(get_opt dwars_addon_ha_mode_select '')" \
+    --arg mode_map_json "$(get_opt dwars_addon_ha_mode_map_json '')" \
+    --arg idle_option "$(get_opt dwars_addon_ha_mode_idle_option 'auto')" \
+    --arg charge_option "$(get_opt dwars_addon_ha_mode_charge_option 'charge')" \
+    --arg discharge_option "$(get_opt dwars_addon_ha_mode_discharge_option 'discharge')" \
+    --arg idle_modes "$(get_opt dwars_addon_ha_server_modes_idle '1,7')" \
+    --arg charge_modes "$(get_opt dwars_addon_ha_server_modes_charge '3')" \
+    --arg discharge_modes "$(get_opt dwars_addon_ha_server_modes_discharge '4')" \
+    --arg power_number "$(get_opt dwars_addon_ha_power_number '')" \
+    --arg charge_power_number "$(get_opt dwars_addon_ha_charge_power_number '')" \
+    --arg discharge_power_number "$(get_opt dwars_addon_ha_discharge_power_number '')" \
+    --arg idle_power_number "$(get_opt dwars_addon_ha_idle_power_number '')" \
+    --arg charge_power_value "$(get_opt dwars_addon_ha_charge_power_value 'server_power')" \
+    --arg discharge_power_value "$(get_opt dwars_addon_ha_discharge_power_value 'server_power')" \
+    --arg idle_power_value "$(get_opt dwars_addon_ha_idle_power_value 'skip')" \
+    --argjson set_power_before_mode "$(get_bool dwars_addon_ha_set_power_before_mode true)" \
+    '{
+      boot: "auto",
+      auto_update: true,
+      options: {
+        api_url: $api_url,
+        telemetry_url: $telemetry_url,
+        api_key: $api_key,
+        client_id: $client_id,
+        poll_interval: $poll_interval,
+        power_watt: $power_watt,
+        debug: $debug,
+        ha_url: "",
+        ha_token: "",
+        soc_entity: $soc_entity,
+        pv_entity: $pv_entity,
+        grid_entity: $grid_entity,
+        battery_power_entity: $battery_power_entity,
+        inverter_mode_entity: $inverter_mode_entity,
+        ha_control_enabled: true,
+        ha_mode_select: $mode_select,
+        ha_mode_map_json: $mode_map_json,
+        ha_mode_idle_option: $idle_option,
+        ha_mode_charge_option: $charge_option,
+        ha_mode_discharge_option: $discharge_option,
+        ha_server_modes_idle: $idle_modes,
+        ha_server_modes_charge: $charge_modes,
+        ha_server_modes_discharge: $discharge_modes,
+        ha_power_number: $power_number,
+        ha_charge_power_number: $charge_power_number,
+        ha_discharge_power_number: $discharge_power_number,
+        ha_idle_power_number: $idle_power_number,
+        ha_charge_power_value: $charge_power_value,
+        ha_discharge_power_value: $discharge_power_value,
+        ha_idle_power_value: $idle_power_value,
+        ha_set_power_before_mode: $set_power_before_mode
+      }
+    }')"
+
+  log "DWARS Generic EMS Add-on configureren."
+  supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+}
+
 start_addon_if_requested() {
   local addon_slug="$1"
   local label="$2"
@@ -405,6 +494,16 @@ install_or_configure_agents() {
       set_addon_boot_auto_update "$se_slug" "SolarEdge Agent"
       configure_solaredge_agent "$se_slug"
       start_addon_if_requested "$se_slug" "SolarEdge Agent"
+    fi
+  fi
+
+  if should_handle other; then
+    local dwars_slug
+    dwars_slug="$(ensure_addon_installed dwars_addon 'DWARS Generic EMS Add-on' || true)"
+    if [ -n "$dwars_slug" ]; then
+      set_addon_boot_auto_update "$dwars_slug" "DWARS Generic EMS Add-on"
+      configure_dwars_addon "$dwars_slug"
+      start_addon_if_requested "$dwars_slug" "DWARS Generic EMS Add-on"
     fi
   fi
 }

@@ -7,6 +7,7 @@ Home Assistant add-on repository voor DWARS EMS componenten, GoodWe en SolarEdge
 - `dwars_installer` — installeert en update de custom components en agent add-ons.
 - `goodwe_agent` — GoodWe EMS bridge die GoodWe Home Assistant entities aanstuurt.
 - `solaredge_agent` — SolarEdge BMS/EMS bridge die SolarEdge Modbus Multi entities aanstuurt.
+- `dwars_addon` — generieke DWARS EMS bridge voor andere omvormers via zelf gekozen Home Assistant entities.
 - `custom_components/goodwe` — aangepaste GoodWe custom integration met discovery, MAC-opslag en IP-herstel.
 - `custom_components/solaredge_modbus_multi` — SolarEdge Modbus Multi met DWARS DHCP/MAC/IP-herstel.
 
@@ -21,6 +22,7 @@ Home Assistant add-on repository voor DWARS EMS componenten, GoodWe en SolarEdge
    - `goodwe`
    - `solaredge`
    - `both`
+   - `andere_omvormer`
 4. Vul de API/client velden in.
 5. Start de installer.
 6. Home Assistant Core wordt automatisch herstart als er custom components zijn geïnstalleerd of bijgewerkt.
@@ -34,6 +36,18 @@ Voor custom components zijn er twee routes:
 
 - Normaal: verhoog bij repo-wijzigingen de versie van `dwars_installer/config.json`. Zodra de add-on door Home Assistant is geüpdatet, kopieert de installer de embedded payload opnieuw naar `/config/custom_components` en herstart Home Assistant Core als er daadwerkelijk verschil is.
 - Direct vanaf GitHub: zet `auto_update_from_github` op `true`. De installer downloadt dan periodiek `github_repo_zip_url`, vergelijkt checksums en herstart Home Assistant Core alleen als een geselecteerde custom component echt gewijzigd is.
+
+## Andere omvormer
+
+Kies in de installer `inverter_type=andere_omvormer` als je geen GoodWe of SolarEdge wilt installeren. Dan installeert hij alleen `DWARS Generic EMS Add-on`. In die add-on stel je zelf de Home Assistant entities en mode mapping in:
+
+- `ha_mode_select`: de select-entity die de inverter-modus bestuurt.
+- `ha_mode_idle_option`: exacte HA select-optie voor idle/self-use/auto.
+- `ha_mode_charge_option`: exacte HA select-optie voor laden.
+- `ha_mode_discharge_option`: exacte HA select-optie voor ontladen.
+- `ha_power_number`: optionele number-entity voor laad-/ontlaadvermogen.
+
+Idle is bedoeld als de modus waarin PV het huis ondersteunt en de inverter/batterij volgens de normale self-use-logica werkt.
 
 ## GoodWe mapping
 

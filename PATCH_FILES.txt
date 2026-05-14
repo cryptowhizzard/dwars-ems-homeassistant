@@ -1,0 +1,10 @@
+README.md
+dwars_addon/Dockerfile
+dwars_addon/README.md
+dwars_addon/config.json
+dwars_addon/dwars_agent.py
+dwars_addon/run.sh
+dwars_installer/Dockerfile
+dwars_installer/README.md
+dwars_installer/config.json
+dwars_installer/run.sh
