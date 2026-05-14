@@ -79,10 +79,10 @@ EMS_POWER_VALUE_SPEC = os.environ.get("HA_EMS_POWER_VALUE", "max")
 # The UI may display labels like "Import AC", but select.select_option expects
 # the actual option value from the entity attributes.
 EMS_MODE_OPTIONS: dict[int, str] = {
-    1: os.environ.get("HA_EMS_MODE_1_OPTION", "battery_standby"),
+    1: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
     3: os.environ.get("HA_EMS_MODE_3_OPTION", "import_ac"),
     4: os.environ.get("HA_EMS_MODE_4_OPTION", "export_ac"),
-    7: os.environ.get("HA_EMS_MODE_7_OPTION", "charge_pv"),
+    7: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
 }
 
 # PV/export curtailment through Home Assistant number + switch entities.
