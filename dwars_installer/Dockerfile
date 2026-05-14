@@ -1,5 +1,5 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=0.1.0
+ARG BUILD_VERSION=0.2.1
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
@@ -10,7 +10,7 @@ LABEL \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.title="DWARS Installer" \
-  org.opencontainers.image.description="Installs DWARS/GoodWe Home Assistant components." \
+  org.opencontainers.image.description="Installs and updates DWARS, GoodWe and SolarEdge Home Assistant components." \
   org.opencontainers.image.source="https://github.com/cryptowhizzard/dwars-ems-homeassistant" \
   org.opencontainers.image.version="${BUILD_VERSION}"
 
@@ -18,6 +18,8 @@ RUN apk add --no-cache \
     bash \
     curl \
     jq \
+    unzip \
+    coreutils \
     ca-certificates \
   && update-ca-certificates
 

@@ -90,10 +90,12 @@ HA_EMS_SET_POWER_BEFORE_MODE=$(get_opt "ha_ems_set_power_before_mode" "true")
 
 # Server mode -> GoodWe EMS option.
 # Gebruik de API/select values uit HA, niet de UI-labels.
-HA_EMS_MODE_1_OPTION=$(get_opt "ha_ems_mode_1_option" "battery_standby")
+# Server mode 1 en 7 gebruiken bewust HA_EMS_MODE_0_OPTION=auto.
+HA_EMS_MODE_0_OPTION=$(get_opt "ha_ems_mode_0_option" "auto")
+HA_EMS_MODE_1_OPTION=$(get_opt "ha_ems_mode_1_option" "$HA_EMS_MODE_0_OPTION")
 HA_EMS_MODE_3_OPTION=$(get_opt "ha_ems_mode_3_option" "import_ac")
 HA_EMS_MODE_4_OPTION=$(get_opt "ha_ems_mode_4_option" "export_ac")
-HA_EMS_MODE_7_OPTION=$(get_opt "ha_ems_mode_7_option" "charge_pv")
+HA_EMS_MODE_7_OPTION=$(get_opt "ha_ems_mode_7_option" "$HA_EMS_MODE_0_OPTION")
 
 # ============================================================
 # GoodWe PV/export curtailment via HA number/switch entities
@@ -126,6 +128,7 @@ export HA_EMS_POWER_NUMBER
 export HA_EMS_POWER_VALUE
 export HA_EMS_SET_POWER_MODES
 export HA_EMS_SET_POWER_BEFORE_MODE
+export HA_EMS_MODE_0_OPTION
 export HA_EMS_MODE_1_OPTION
 export HA_EMS_MODE_3_OPTION
 export HA_EMS_MODE_4_OPTION
@@ -153,7 +156,7 @@ printf '[GoodWe] Start agent: API_URL=%s interval=%ss power=%sW api_key_length=%
 printf '[GoodWe] HA_URL=%s ha_token_length=%s supervisor_token_length=%s\n' "$HA_URL" "$HATOKEN_LEN" "$SUP_TOKEN_LEN"
 printf '[GoodWe] HA EMS control: enabled=%s select_entities=%s power_number_entities=%s power_value=%s power_modes=%s map: 1=%s 3=%s 4=%s 7=%s\n' \
   "$HA_CONTROL_ENABLED" "$HA_EMS_MODE_SELECT" "$HA_EMS_POWER_NUMBER" "$HA_EMS_POWER_VALUE" "$HA_EMS_SET_POWER_MODES" \
-  "$HA_EMS_MODE_1_OPTION" "$HA_EMS_MODE_3_OPTION" "$HA_EMS_MODE_4_OPTION" "$HA_EMS_MODE_7_OPTION"
+  "$HA_EMS_MODE_0_OPTION" "$HA_EMS_MODE_3_OPTION" "$HA_EMS_MODE_4_OPTION" "$HA_EMS_MODE_0_OPTION"
 printf '[GoodWe] Grid export curtailment: enabled=%s number_entities=%s switch_entities=%s off=%s restore=%s switch_curtail=%s switch_restore=%s threshold=%s\n' \
   "$HA_PV_CURTAIL_ENABLED" "$HA_GRID_EXPORT_LIMIT_NUMBER" "$HA_GRID_EXPORT_LIMIT_SWITCH" \
   "$HA_GRID_EXPORT_LIMIT_OFF_VALUE" "$HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE" \
