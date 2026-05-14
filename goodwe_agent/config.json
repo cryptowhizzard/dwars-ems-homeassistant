@@ -1,6 +1,6 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.5.23",
+  "version": "1.5.25",
   "slug": "goodwe_agent",
   "description": "Bridge central server mode voor GoodWe. Stuurt GoodWe EMS mode via Home Assistant select/number/switch entities in plaats van Modbus, inclusief multi-inverter support voor EMS mode, power en grid export curtailment.",
   "startup": "services",
@@ -27,7 +27,7 @@
     "pv_entity": "sensor.goodwe_pv_power",
     "grid_entity": "sensor.goodwe_active_power",
     "debug": 1,
-    "ha_url": "",
+    "ha_url": "http://supervisor/core/api",
     "ha_token": "",
     "ha_control_enabled": true,
     "ha_ems_mode_select": "select.goodwe_ems_mode",
@@ -40,13 +40,13 @@
     "ha_ems_mode_3_option": "import_ac",
     "ha_ems_mode_4_option": "export_ac",
     "ha_ems_mode_7_option": "auto",
-    "ha_grid_export_limit_number": "number.goodwe_net_exportlimiet",
+    "ha_grid_export_limit_number": "number.goodwe_grid_export_limit",
     "ha_grid_export_limit_switch": "switch.goodwe_grid_export_limit_switch",
     "ha_grid_export_limit_off_value": "0",
     "ha_grid_export_limit_default_value": "max",
     "ha_grid_export_limit_switch_curtail_state": "on",
     "ha_grid_export_limit_switch_restore_state": "off",
-    "ha_pv_curtail_below_eur_kwh": "",
+    "ha_pv_curtail_below_eur_kwh": "-0,12",
     "ha_pv_curtail_enabled": true
   },
   "schema": {
