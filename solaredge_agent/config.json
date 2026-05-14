@@ -1,6 +1,6 @@
 {
   "name": "DWARS SolarEdge Agent",
-  "version": "3.4.4",
+  "version": "3.4.4.1",
   "slug": "solaredge_agent",
   "description": "Stuurt SolarEdge BMS/EMS aan via centrale API en Home Assistant select/number entities. Ondersteunt SolarEdge Modbus Multi entity naming, PV-curtailment, agent-versiemelding en backup.yaml controle.",
   "arch": [
