@@ -389,7 +389,9 @@ def ha_set_number_value(entity_id: str, value: float) -> bool:
 
 def normalize_select_option(entity_id: str, requested_option: str) -> str | None:
     option = str(requested_option or "").strip()
-    if not option or option.lower() in ("none", "null", "skip", "disabled", "false", "off"):
+    # Let op: "off" is hier een geldige select-option voor SMA en meerdere andere
+    # integraties. Daarom staat "off" bewust NIET in deze skip-lijst.
+    if not option or option.lower() in ("none", "null", "skip", "disabled", "false"):
         return None
 
     state = ha_get_state(entity_id)
@@ -439,6 +441,53 @@ def ha_select_option(entity_id: str, option: str) -> bool:
         log(f"Select {entity_id} => {selected_option}")
     else:
         log(f"WARN: failed to set select {entity_id} => {selected_option}")
+    return ok
+
+
+def looks_like_entity_id(value: str) -> bool:
+    return bool(re.match(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$", str(value or "").strip()))
+
+
+def mode_action_entities(option: str) -> list[str]:
+    """Return entity IDs when a mode target is configured as entity action(s).
+
+    This allows the generic agent to press HA buttons/scripts instead of selecting a
+    select-option. Example for SMA:
+      ha_mode_charge_option=button.sma_10se_set_charge
+      ha_mode_discharge_option=button.sma_10se_set_discharge
+      ha_mode_idle_option=button.sma_10se_set_off
+    """
+    raw = str(option or "").strip()
+    if not raw:
+        return []
+    parts = [part.strip() for part in re.split(r"[,;\s]+", raw) if part.strip()]
+    if not parts:
+        return []
+    if all(looks_like_entity_id(part) for part in parts):
+        return parts
+    return []
+
+
+def ha_press_or_turn_on_entity(entity_id: str) -> bool:
+    domain = str(entity_id or "").split(".", 1)[0]
+    if domain in ("button", "input_button"):
+        service_domain = domain
+        service = "press"
+    elif domain in ("script", "scene"):
+        service_domain = domain
+        service = "turn_on"
+    elif domain == "switch":
+        service_domain = "switch"
+        service = "turn_on"
+    else:
+        log(f"WARN: mode target {entity_id!r} is an entity, but domain {domain!r} is not supported as an action. Use button.*, input_button.*, script.*, scene.*, or switch.*")
+        return False
+
+    ok = ha_call_service(service_domain, service, {"entity_id": entity_id})
+    if ok:
+        log(f"Mode action {service_domain}.{service} => {entity_id}")
+    else:
+        log(f"WARN: failed mode action {service_domain}.{service} => {entity_id}")
     return ok
 
 
@@ -503,9 +552,22 @@ def set_power(kind: str, server_power: int) -> bool:
 
 
 def set_mode(option: str) -> bool:
+    # Mode target can be either:
+    # 1. a select option value, used with ha_mode_select
+    # 2. one or more action entities, for example button.sma_10se_set_charge
+    #
+    # SMA 10SE browser control needs the real button press path in some installs,
+    # so entity targets get priority over select mode.
+    action_entities = mode_action_entities(option)
+    if action_entities:
+        ok_all = True
+        for entity_id in action_entities:
+            ok_all = ha_press_or_turn_on_entity(entity_id) and ok_all
+        return ok_all
+
     entities = split_entities(MODE_SELECT)
     if not entities:
-        log("WARN: ha_mode_select is empty; cannot set inverter mode")
+        log("WARN: ha_mode_select is empty and mode option is not an action entity; cannot set inverter mode")
         return False
     ok_all = True
     for entity_id in entities:
