@@ -1,8 +1,8 @@
 {
   "name": "DWARS Generic EMS Add-on",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "slug": "dwars_addon",
-  "description": "Generieke DWARS EMS bridge voor andere omvormers. Stuurt zelf gekozen Home Assistant entities aan met configureerbare mode mapping.",
+  "description": "Generieke DWARS EMS bridge voor andere omvormers. Stuurt zelf gekozen Home Assistant select- of button/script-entities aan met configureerbare mode mapping.",
   "startup": "services",
   "boot": "auto",
   "homeassistant_api": true,
