@@ -1,0 +1,19 @@
+{
+  "title": "SMA 10SE Browser Control",
+  "config": {
+    "step": {
+      "user": {
+        "title": "SMA 10SE Browser Control",
+        "description": "Connect to the SMA 10SE Browser Control add-on HTTP API.",
+        "data": {
+          "name": "Name",
+          "api_url": "API URL",
+          "api_token": "API token"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the add-on API. Check the URL, token, and whether the add-on is running."
+    }
+  }
+}

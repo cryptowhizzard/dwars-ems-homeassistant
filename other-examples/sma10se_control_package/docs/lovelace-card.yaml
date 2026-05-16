@@ -1,0 +1,11 @@
+type: entities
+title: SMA 10SE Battery Control
+entities:
+  - entity: select.sma_10se_battery_fallback_mode
+    name: Accu modus
+  - entity: sensor.sma_10se_actual_mode
+  - entity: sensor.sma_10se_pending_mode
+  - entity: sensor.sma_10se_cooldown_remaining
+  - entity: button.sma_10se_set_off_standby
+  - entity: button.sma_10se_set_charge
+  - entity: button.sma_10se_set_discharge

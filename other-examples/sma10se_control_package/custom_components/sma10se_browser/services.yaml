@@ -1,0 +1,10 @@
+set_mode:
+  fields:
+    mode:
+      required: true
+      selector:
+        select:
+          options:
+            - "off"
+            - "charge"
+            - "discharge"

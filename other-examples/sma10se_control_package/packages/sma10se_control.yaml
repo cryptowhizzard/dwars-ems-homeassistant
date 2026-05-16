@@ -1,0 +1,57 @@
+# Optional package if you do NOT want to use the custom integration.
+# Put this file in /config/packages/sma10se_control.yaml and reload/restart Home Assistant.
+# Adjust the URL if your HA Core container cannot reach 172.30.32.1.
+
+input_select:
+  sma10se_battery_mode_request:
+    name: SMA 10SE accu modus aanvraag
+    options:
+      - off
+      - charge
+      - discharge
+    icon: mdi:battery-cog
+
+rest_command:
+  sma10se_set_mode:
+    url: "http://172.30.32.1:8099/set_mode"
+    method: POST
+    headers:
+      content-type: "application/json"
+    payload: '{"mode": "{{ mode }}"}'
+
+script:
+  sma10se_set_off:
+    alias: SMA 10SE accu standby/uit
+    mode: single
+    sequence:
+      - service: rest_command.sma10se_set_mode
+        data:
+          mode: "off"
+
+  sma10se_set_charge:
+    alias: SMA 10SE accu laden
+    mode: single
+    sequence:
+      - service: rest_command.sma10se_set_mode
+        data:
+          mode: "charge"
+
+  sma10se_set_discharge:
+    alias: SMA 10SE accu ontladen
+    mode: single
+    sequence:
+      - service: rest_command.sma10se_set_mode
+        data:
+          mode: "discharge"
+
+automation:
+  - alias: SMA 10SE stuur aangevraagde accu modus
+    id: sma10se_send_requested_battery_mode
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id: input_select.sma10se_battery_mode_request
+    action:
+      - service: rest_command.sma10se_set_mode
+        data:
+          mode: "{{ trigger.to_state.state }}"

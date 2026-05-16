@@ -1,0 +1,11 @@
+{
+  "domain": "sma10se_browser",
+  "name": "SMA 10SE Browser Control",
+  "version": "0.1.0",
+  "documentation": "https://example.local/sma10se_browser",
+  "issue_tracker": "https://example.local/sma10se_browser/issues",
+  "config_flow": true,
+  "iot_class": "local_push",
+  "requirements": [],
+  "codeowners": []
+}
