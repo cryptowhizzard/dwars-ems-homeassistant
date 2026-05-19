@@ -87,8 +87,8 @@ EMS_POWER_VALUE_SPEC = os.environ.get("HA_EMS_POWER_VALUE", "max")
 # the actual option value from the entity attributes.
 EMS_MODE_OPTIONS: dict[int, str] = {
     1: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
-    3: os.environ.get("HA_EMS_MODE_3_OPTION", "import_ac"),
-    4: os.environ.get("HA_EMS_MODE_4_OPTION", "export_ac"),
+    3: os.environ.get("HA_EMS_MODE_3_OPTION", "charge_battery"),
+    4: os.environ.get("HA_EMS_MODE_4_OPTION", "discharge_battery"),
     7: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
 }
 
