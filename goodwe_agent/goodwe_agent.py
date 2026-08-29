@@ -1,133 +1,189 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""DWARS/MetDeZon GoodWe Home Assistant agent.
 
+The agent intentionally controls the inverter through Home Assistant entities.  It
+has four independent cadences:
+
+* 10 s: fuse protection / charge-block latch.
+* 30 s: standalone zero-export compensation.
+* 60 s: BMS/EMS decision, telemetry and mandatory GoodWe defaults.
+* 60 s: rediscovery of serial-specific entity IDs and inverter metadata.
+
+The BMS API key is the only customer-specific identifier that is required.  The
+API response can supply reserve SoC and the remaining managed defaults.
+"""
+
+from __future__ import annotations
+
+import ipaddress
 import os
 import re
+import socket
 import time
 import traceback
-from typing import Any
+from typing import Any, Iterable
 
 import requests
 
-
-# ========================
-# Env helpers
-# ========================
 
 def env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return default
-    return str(raw).strip().lower() in ("1", "true", "yes", "on", "ja")
+    return str(raw).strip().lower() in ("1", "true", "yes", "on", "ja", "aan")
 
 
-def log(msg: str):
-    print(f"[GoodWe] {msg}", flush=True)
+def env_int(name: str, default: int, minimum: int = 0) -> int:
+    try:
+        return max(minimum, int(float(str(os.environ.get(name, default)).strip())))
+    except (TypeError, ValueError):
+        return max(minimum, default)
 
 
-# ========================
-# Env configuration
-# ========================
+def log(message: str) -> None:
+    print(f"[GoodWe] {message}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
 API_KEY = os.environ.get("API_KEY") or os.environ.get("api_key") or ""
 CLIENT_ID = os.environ.get("CLIENT_ID") or os.environ.get("client_id") or ""
-API_URL = os.environ.get("API_URL", "https://api.metdezon.nl/bms/api/next_action.php")
-TEL_URL = os.environ.get("TELEMETRY_URL", "https://api.metdezon.nl/bms/api/telemetry.php")
-INTERVAL = int(os.environ.get("INTERVAL", "60"))
-POWER = int(os.environ.get("POWER", "5000"))
+API_URL = os.environ.get(
+    "API_URL", "https://api.metdezon.nl/bms/api/next_action.php"
+)
+TEL_URL = os.environ.get(
+    "TELEMETRY_URL", "https://api.metdezon.nl/bms/api/telemetry.php"
+)
 VERIFY_SSL = env_bool("VERIFY_SSL", True)
+
+DECISION_INTERVAL = env_int("INTERVAL", 60, 10)
+SAFETY_INTERVAL = env_int("SAFETY_INTERVAL", 10, 2)
+STANDALONE_INTERVAL = env_int("STANDALONE_INTERVAL", 30, 5)
+DEFAULTS_INTERVAL = env_int("DEFAULTS_INTERVAL", 60, 10)
+ENTITY_DISCOVERY_INTERVAL = env_int("ENTITY_DISCOVERY_INTERVAL", 60, 10)
+POWER = env_int("POWER", 5000, 0)
+DEBUG = env_bool("DEBUG", False)
 
 AGENT_NAME = os.environ.get("ADDON_NAME", "GoodWe Agent")
 AGENT_VERSION = os.environ.get("ADDON_VERSION", "unknown")
 AGENT_TYPE = os.environ.get("AGENT_TYPE", "goodwe")
+
 BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", True)
 BACKUP_YAML_PATH = os.environ.get("BACKUP_YAML_PATH", "/config/backup.yaml")
 BACKUP_YAML_OVERWRITE = env_bool("BACKUP_YAML_OVERWRITE", False)
-DEBUG = env_bool("DEBUG", False)
 
-# Telemetry entities
-SOC_ENTITY = os.environ.get("SOC_ENTITY", "sensor.goodwe_battery_state_of_charge")
-MODE_ENTITY = os.environ.get("MODE_ENTITY", "")
-PV_ENTITY = os.environ.get("PV_ENTITY", "sensor.goodwe_pv_power")
-GRID_ENTITY = os.environ.get("GRID_ENTITY", "sensor.goodwe_active_power")
-
-# Home Assistant API config
-DEFAULT_HA_URL = "http://homeassistant:8123"
-HA_URL_ENV = os.environ.get("HA_URL", DEFAULT_HA_URL)
+DEFAULT_HA_URL = "http://supervisor/core"
+HA_URL_ENV = os.environ.get("HA_URL", DEFAULT_HA_URL) or DEFAULT_HA_URL
 DISABLE_HA = env_bool("DISABLE_HA", False)
-
-# GoodWe EMS control through Home Assistant select/number entities.
-# Entity settings may contain one entity_id or a comma/semicolon/space/newline separated list.
-# This allows one policy action to update multiple GoodWe inverters.
 HA_CONTROL_ENABLED = env_bool("HA_CONTROL_ENABLED", True)
-EMS_MODE_ENTITY = (
+AUTO_ENTITY_DISCOVERY = env_bool("HA_AUTO_ENTITY_DISCOVERY", True)
+SERIAL_NUMBER_ENV = os.environ.get("GOODWE_SERIAL_NUMBER", "").strip()
+
+# Telemetry. "auto" means: select the entity belonging to the detected serial.
+SOC_ENTITY_RAW = os.environ.get("SOC_ENTITY", "auto")
+MODE_ENTITY_RAW = os.environ.get("MODE_ENTITY", "")
+PV_ENTITY_RAW = os.environ.get("PV_ENTITY", "auto")
+GRID_ENTITY_RAW = os.environ.get("GRID_ENTITY", "auto")
+BATTERY_POWER_ENTITY_RAW = os.environ.get("BATTERY_POWER_ENTITY", "auto")
+PHASE_ENTITY_RAW = os.environ.get("GOODWE_PHASE_ENTITY", "auto")
+SERIAL_ENTITY_RAW = os.environ.get("GOODWE_SERIAL_ENTITY", "auto")
+IP_ENTITY_RAW = os.environ.get("GOODWE_IP_ENTITY", "auto")
+MAC_ENTITY_RAW = os.environ.get("GOODWE_MAC_ENTITY", "auto")
+LAST_SEEN_ENTITY_RAW = os.environ.get("GOODWE_LAST_SEEN_ENTITY", "auto")
+
+# GoodWe EMS entities.
+EMS_MODE_ENTITY_RAW = (
     os.environ.get("HA_EMS_MODE_SELECT")
     or os.environ.get("EMS_MODE_ENTITY")
-    or "select.goodwe_ems_mode"
+    or "auto"
 )
-EMS_POWER_NUMBER = (
+EMS_POWER_NUMBER_RAW = (
     os.environ.get("HA_EMS_POWER_NUMBER")
     or os.environ.get("EMS_POWER_NUMBER")
-    or "number.goodwe_eco_mode_power"
+    or "auto"
 )
 EMS_SET_POWER_MODES_RAW = os.environ.get("HA_EMS_SET_POWER_MODES", "3,4")
 EMS_SET_POWER_BEFORE_MODE = env_bool("HA_EMS_SET_POWER_BEFORE_MODE", True)
+EMS_POWER_VALUE_SPEC = os.environ.get("HA_EMS_POWER_VALUE", "server_power")
 
-# Value for EMS_POWER_NUMBER:
-# - max: use entity max, good for GoodWe eco_mode_power sliders that expose 0..100 %
-# - server_power: use API power_watt, good for entities that expect W
-# - numeric value: fixed value
-EMS_POWER_VALUE_SPEC = os.environ.get("HA_EMS_POWER_VALUE", "max")
-
-# Central server mode -> GoodWe EMS select option.
-# Your GoodWe HA entity exposes these internal option values:
-# auto, charge_pv, discharge_pv, import_ac, export_ac, conserve, off_grid,
-# battery_standby, buy_power, sell_power, charge_battery, discharge_battery.
-# The UI may display labels like "Import AC", but select.select_option expects
-# the actual option value from the entity attributes.
+# Mode 1 is an explicit battery hold/standby mode.  Legacy import_ac/export_ac
+# values are normalized later so upgraded installations do not keep using them.
 EMS_MODE_OPTIONS: dict[int, str] = {
-    1: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
+    0: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
+    1: os.environ.get("HA_EMS_MODE_1_OPTION", "battery_standby"),
     3: os.environ.get("HA_EMS_MODE_3_OPTION", "charge_battery"),
     4: os.environ.get("HA_EMS_MODE_4_OPTION", "discharge_battery"),
-    7: os.environ.get("HA_EMS_MODE_0_OPTION", "auto"),
+    7: os.environ.get("HA_EMS_MODE_7_OPTION", "auto"),
 }
 
-# PV/export curtailment through Home Assistant number + switch entities.
-GRID_EXPORT_LIMIT_ENTITIES = (
+# Managed defaults.  The BMS reserve SoC always takes precedence for the two
+# DOD values.  With OVERRIDE_DEFAULT_VALUES enabled, the configured values are
+# used; otherwise the safe DWARS defaults are enforced.
+OVERRIDE_DEFAULT_VALUES = env_bool("OVERRIDE_DEFAULT_VALUES", False)
+DEFAULT_DOD = env_int("GOODWE_DEFAULT_DOD", 90, 0)
+DEFAULT_DOD_ON_GRID = env_int("GOODWE_DEFAULT_DOD_ON_GRID", 90, 0)
+DEFAULT_DOD_HOLDING = os.environ.get("GOODWE_DEFAULT_DOD_HOLDING", "off")
+DEFAULT_BACKUP_SUPPLY = os.environ.get("GOODWE_DEFAULT_BACKUP_SUPPLY", "on")
+DEFAULT_OPERATION_MODE = os.environ.get("GOODWE_DEFAULT_OPERATION_MODE", "general")
+
+DOD_HOLDING_SWITCH_RAW = os.environ.get("HA_DOD_HOLDING_SWITCH", "auto")
+BACKUP_SUPPLY_SWITCH_RAW = os.environ.get("HA_BACKUP_SUPPLY_SWITCH", "auto")
+DOD_NUMBER_RAW = os.environ.get("HA_DOD_NUMBER", "auto")
+DOD_ON_GRID_NUMBER_RAW = os.environ.get("HA_DOD_ON_GRID_NUMBER", "auto")
+OPERATION_MODE_SELECT_RAW = os.environ.get("HA_OPERATION_MODE_SELECT", "auto")
+
+# Grid export limit.  "auto" resolves to 3000 W on one phase and 5000 W on
+# three phases.  Switch restore defaults to ON as requested.
+GRID_EXPORT_LIMIT_ENTITIES_RAW = (
     os.environ.get("HA_GRID_EXPORT_LIMIT_NUMBER")
     or os.environ.get("GOODWE_GRID_EXPORT_LIMIT_NUMBER")
-    or "number.goodwe_net_exportlimiet"
-)
-GRID_EXPORT_LIMIT_SWITCHES = (
-    os.environ.get("HA_GRID_EXPORT_LIMIT_SWITCH")
-    or os.environ.get("GOODWE_GRID_EXPORT_LIMIT_SWITCH")
-    or "switch.goodwe_grid_export_limit_switch"
-)
-GRID_EXPORT_LIMIT_OFF_VALUE = os.environ.get("HA_GRID_EXPORT_LIMIT_OFF_VALUE", "0")
-GRID_EXPORT_LIMIT_DEFAULT_VALUE = os.environ.get("HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE", "max")
-GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE = os.environ.get("HA_GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE", "on")
-GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE = os.environ.get("HA_GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE", "off")
-PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get("HA_PV_CURTAIL_BELOW_EUR_KWH", "")
-PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
-
-# Charge block / high export protection.
-# When the configured sensor goes below the trigger threshold, charge modes are
-# blocked for at least the configured duration and until the sensor is above
-# the release threshold again.
-CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
-CHARGE_BLOCK_SENSOR = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "sensor.goodwe_active_power_total")
-CHARGE_BLOCK_TRIGGER_BELOW_W_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "-13000")
-CHARGE_BLOCK_RELEASE_ABOVE_W_RAW = os.environ.get("HA_CHARGE_BLOCK_RELEASE_ABOVE_W", "-8000")
-CHARGE_BLOCK_DURATION_SEC_RAW = os.environ.get("HA_CHARGE_BLOCK_DURATION_SEC", "300")
-CHARGE_BLOCK_MODES_RAW = os.environ.get("HA_CHARGE_BLOCK_MODES", "3")
-CHARGE_BLOCK_FALLBACK_OPTION = (
-    os.environ.get("HA_CHARGE_BLOCK_FALLBACK_OPTION")
-    or os.environ.get("HA_EMS_MODE_0_OPTION")
     or "auto"
 )
+GRID_EXPORT_LIMIT_SWITCHES_RAW = (
+    os.environ.get("HA_GRID_EXPORT_LIMIT_SWITCH")
+    or os.environ.get("GOODWE_GRID_EXPORT_LIMIT_SWITCH")
+    or "auto"
+)
+GRID_EXPORT_LIMIT_OFF_VALUE = os.environ.get("HA_GRID_EXPORT_LIMIT_OFF_VALUE", "0")
+GRID_EXPORT_LIMIT_DEFAULT_VALUE = os.environ.get(
+    "HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE", "auto"
+)
+GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE = os.environ.get(
+    "HA_GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE", "on"
+)
+GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE = os.environ.get(
+    "HA_GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE", "on"
+)
+PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get(
+    "HA_PV_CURTAIL_BELOW_EUR_KWH", ""
+)
+PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
+
+# Fast fuse protection.  Thresholds use "auto" by default:
+# one phase -3500/-2000 W; three phase -8000/-5000 W.
+CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
+CHARGE_BLOCK_SENSOR_RAW = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "auto")
+CHARGE_BLOCK_TRIGGER_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "auto")
+CHARGE_BLOCK_RELEASE_RAW = os.environ.get(
+    "HA_CHARGE_BLOCK_RELEASE_ABOVE_W", "auto"
+)
+CHARGE_BLOCK_DURATION_SEC = env_int("HA_CHARGE_BLOCK_DURATION_SEC", 300, 0)
+CHARGE_BLOCK_MODES_RAW = os.environ.get("HA_CHARGE_BLOCK_MODES", "3")
+CHARGE_BLOCK_FALLBACK_OPTION = os.environ.get(
+    "HA_CHARGE_BLOCK_FALLBACK_OPTION", "auto"
+)
+
+# Standalone inverter with PV on another inverter/meter.
+STANDALONE_ENABLED = env_bool("STANDALONE_ENABLED", False)
+STANDALONE_PV_ENTITY_RAW = os.environ.get("STANDALONE_PV_ENTITY", "")
+STANDALONE_GRID_ENTITY_RAW = os.environ.get("STANDALONE_GRID_ENTITY", "auto")
+STANDALONE_DEADBAND_W = env_int("STANDALONE_DEADBAND_W", 150, 0)
+STANDALONE_MAX_CHARGE_W = env_int("STANDALONE_MAX_CHARGE_W", 0, 0)
 
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
-
 
 BACKUP_YAML_CONTENT = """- alias: Auto update everything
   description: Automatically install updates
@@ -148,78 +204,10 @@ BACKUP_YAML_CONTENT = """- alias: Auto update everything
 """
 
 
-def truthy_text(value: Any, default: bool = False) -> bool:
-    if value is None:
-        return default
-    return str(value).strip().lower() in ("1", "true", "yes", "on", "ja", "aan")
+# ---------------------------------------------------------------------------
+# Generic helpers
+# ---------------------------------------------------------------------------
 
-
-def backup_yaml_content_ok(content: str) -> bool:
-    required = (
-        "alias: Auto update everything",
-        "backup.create_automatic",
-        "update.install",
-        "entity_id: all",
-    )
-    return all(marker in content for marker in required)
-
-
-def ensure_backup_yaml() -> dict[str, Any]:
-    """Ensure /config/backup.yaml contains the DWARS auto-update automation."""
-    path = str(BACKUP_YAML_PATH or "/config/backup.yaml").strip() or "/config/backup.yaml"
-    status: dict[str, Any] = {
-        "backup_yaml_path": path,
-        "backup_yaml_ok": None,
-        "backup_yaml_updated_at": None,
-    }
-
-    if not BACKUP_YAML_CHECK_ENABLED:
-        return status
-
-    try:
-        parent = os.path.dirname(path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
-        changed = False
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as handle:
-                current = handle.read()
-
-            if backup_yaml_content_ok(current):
-                status["backup_yaml_ok"] = True
-            else:
-                if BACKUP_YAML_OVERWRITE:
-                    new_content = BACKUP_YAML_CONTENT
-                else:
-                    separator = "\n\n# DWARS auto update automation\n"
-                    new_content = current.rstrip() + separator + BACKUP_YAML_CONTENT
-                with open(path, "w", encoding="utf-8") as handle:
-                    handle.write(new_content)
-                changed = True
-                status["backup_yaml_ok"] = True
-        else:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(BACKUP_YAML_CONTENT)
-            changed = True
-            status["backup_yaml_ok"] = True
-
-        mtime = int(os.path.getmtime(path)) if os.path.exists(path) else int(time.time())
-        status["backup_yaml_updated_at"] = int(time.time()) if changed else mtime
-        if changed:
-            log(f"backup.yaml ensured at {path}")
-    except Exception as exc:
-        status["backup_yaml_ok"] = False
-        status["backup_yaml_error"] = str(exc)
-        log(f"WARN: backup.yaml check failed for {path}: {exc}")
-
-    return status
-
-
-
-# ========================
-# Generic parsers/helpers
-# ========================
 
 def parse_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
@@ -227,19 +215,17 @@ def parse_float(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     text = str(value).strip().replace(",", ".")
-    if not text:
+    if not text or text.lower() in ("unknown", "unavailable", "none", "null"):
         return None
     try:
         return float(text)
-    except Exception:
+    except ValueError:
         return None
 
 
 def parse_int(value: Any, default: int = 0) -> int:
-    val = parse_float(value)
-    if val is None:
-        return default
-    return int(round(val))
+    parsed = parse_float(value)
+    return default if parsed is None else int(round(parsed))
 
 
 def parse_bool_value(value: Any) -> bool | None:
@@ -255,7 +241,9 @@ def parse_bool_value(value: Any) -> bool | None:
     return None
 
 
-def split_entities(raw: str) -> list[str]:
+def split_entities(raw: str | Iterable[str]) -> list[str]:
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
     text = str(raw or "").strip()
     if not text or text.lower() in ("none", "skip", "disabled", "false", "off"):
         return []
@@ -268,43 +256,60 @@ def normalize_key(value: Any) -> str:
     return text.strip("_")
 
 
-def parse_int_set(raw: str, label: str = "mode list") -> set[int]:
+def normalize_serial(value: Any) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", str(value or "").strip()).upper()
+
+
+def serial_slug(value: Any) -> str:
+    return normalize_key(normalize_serial(value))
+
+
+def parse_int_set(raw: str, label: str) -> set[int]:
     out: set[int] = set()
     for part in re.split(r"[,;\s]+", str(raw or "")):
-        part = part.strip()
-        if not part:
+        if not part.strip():
             continue
         try:
             out.add(int(part))
-        except Exception:
-            log(f"WARN: invalid mode number in {label}: {part!r}")
+        except ValueError:
+            log(f"WARN: invalid integer in {label}: {part!r}")
     return out
 
 
-EMS_SET_POWER_MODES = parse_int_set(EMS_SET_POWER_MODES_RAW, "HA_EMS_SET_POWER_MODES")
-CHARGE_BLOCK_TRIGGER_BELOW_W = parse_float(CHARGE_BLOCK_TRIGGER_BELOW_W_RAW)
-if CHARGE_BLOCK_TRIGGER_BELOW_W is None:
-    CHARGE_BLOCK_TRIGGER_BELOW_W = -13000.0
-
-CHARGE_BLOCK_RELEASE_ABOVE_W = parse_float(CHARGE_BLOCK_RELEASE_ABOVE_W_RAW)
-if CHARGE_BLOCK_RELEASE_ABOVE_W is None:
-    CHARGE_BLOCK_RELEASE_ABOVE_W = -8000.0
-
-CHARGE_BLOCK_DURATION_SEC = max(0, parse_int(CHARGE_BLOCK_DURATION_SEC_RAW, default=300))
-CHARGE_BLOCK_MODES = parse_int_set(CHARGE_BLOCK_MODES_RAW, "HA_CHARGE_BLOCK_MODES")
-if not CHARGE_BLOCK_MODES:
-    CHARGE_BLOCK_MODES = {3}
-
-charge_block_active = False
-charge_block_until_ts = 0.0
+def nested_get(data: dict[str, Any], path: list[str]) -> Any:
+    current: Any = data
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
 
 
-# ========================
-# Home Assistant API
-# ========================
+def normalize_ems_option(option: str) -> str:
+    key = normalize_key(option)
+    aliases = {
+        "import_ac": "charge_battery",
+        "buy_power": "charge_battery",
+        "charge_ac": "charge_battery",
+        "export_ac": "discharge_battery",
+        "sell_power": "discharge_battery",
+        "standby": "battery_standby",
+    }
+    return aliases.get(key, key)
+
+
+EMS_SET_POWER_MODES = parse_int_set(EMS_SET_POWER_MODES_RAW, "HA_EMS_SET_POWER_MODES") or {3, 4}
+CHARGE_BLOCK_MODES = parse_int_set(CHARGE_BLOCK_MODES_RAW, "HA_CHARGE_BLOCK_MODES") or {3}
+EMS_MODE_OPTIONS = {mode: normalize_ems_option(option) for mode, option in EMS_MODE_OPTIONS.items()}
+
+
+# ---------------------------------------------------------------------------
+# HA API and entity discovery
+# ---------------------------------------------------------------------------
+
 
 def ha_base_url() -> str:
-    url = HA_URL_ENV.rstrip("/")
+    url = (HA_URL_ENV or DEFAULT_HA_URL).rstrip("/")
     if not url.endswith("/api"):
         url += "/api"
     return url
@@ -321,7 +326,7 @@ def get_ha_token() -> str | None:
 def ha_headers() -> dict[str, str] | None:
     token = get_ha_token()
     if not token:
-        log("ERROR: no Home Assistant token in env (HA_TOKEN/SUPERVISOR_TOKEN/HASSIO_TOKEN).")
+        log("ERROR: no Home Assistant token available")
         return None
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -329,48 +334,65 @@ def ha_headers() -> dict[str, str] | None:
 def ha_get_state(entity_id: str) -> dict[str, Any] | None:
     if DISABLE_HA or not entity_id:
         return None
-
     headers = ha_headers()
     if headers is None:
         return None
-
-    url = f"{ha_base_url()}/states/{entity_id}"
     try:
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(
+            f"{ha_base_url()}/states/{entity_id}", headers=headers, timeout=5
+        )
         if response.status_code == 200:
             data = response.json()
             return data if isinstance(data, dict) else None
         if DEBUG:
-            log(f"HA GET {entity_id} -> {response.status_code} {response.text[:200]}")
-    except Exception as exc:
+            log(f"HA GET {entity_id} -> {response.status_code} {response.text[:160]}")
+    except Exception as exc:  # network boundary
         if DEBUG:
             log(f"HA GET {entity_id} error: {exc}")
     return None
 
 
+def ha_get_all_states() -> list[dict[str, Any]]:
+    if DISABLE_HA:
+        return []
+    headers = ha_headers()
+    if headers is None:
+        return []
+    try:
+        response = requests.get(f"{ha_base_url()}/states", headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return data if isinstance(data, list) else []
+    except Exception as exc:
+        if DEBUG:
+            log(f"HA state inventory error: {exc}")
+        return []
+
+
 def ha_call_service(domain: str, service: str, payload: dict[str, Any]) -> bool:
     if DISABLE_HA:
         return False
-
     headers = ha_headers()
     if headers is None:
         return False
-
-    url = f"{ha_base_url()}/services/{domain}/{service}"
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=8)
+        response = requests.post(
+            f"{ha_base_url()}/services/{domain}/{service}",
+            headers=headers,
+            json=payload,
+            timeout=8,
+        )
         ok = 200 <= response.status_code < 300
         if DEBUG or not ok:
-            log(f"HA SERVICE {domain}.{service} {payload} -> {response.status_code} {response.text[:200]}")
+            log(
+                f"HA SERVICE {domain}.{service} {payload} -> "
+                f"{response.status_code} {response.text[:160]}"
+            )
         return ok
     except Exception as exc:
         log(f"HA SERVICE {domain}.{service} error: {exc}")
         return False
 
-
-# ========================
-# HA entity helpers
-# ========================
 
 def ha_get_config_version() -> str | None:
     headers = ha_headers()
@@ -381,484 +403,665 @@ def ha_get_config_version() -> str | None:
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, dict) and data.get("version"):
-                return str(data.get("version"))
-        if DEBUG:
-            log(f"HA config version -> {response.status_code} {response.text[:200]}")
+                return str(data["version"])
     except Exception as exc:
         if DEBUG:
             log(f"HA config version error: {exc}")
     return None
 
 
+class EntityMap:
+    """Resolved entities and inverter metadata for one GoodWe device."""
+
+    def __init__(self) -> None:
+        self.serial = normalize_serial(SERIAL_NUMBER_ENV)
+        self.phase_count = 0
+        self.ip_address: str | None = None
+        self.mac_address: str | None = None
+        self.last_seen: str | None = None
+        self.entities: dict[str, str] = {}
+        self._inventory: list[dict[str, Any]] = []
+
+    def entity(self, key: str) -> str:
+        return self.entities.get(key, "")
+
+    def _goodwe_states(self) -> list[dict[str, Any]]:
+        serial = serial_slug(self.serial)
+        result: list[dict[str, Any]] = []
+        for state in self._inventory:
+            entity_id = str(state.get("entity_id") or "")
+            attrs = state.get("attributes") or {}
+            friendly = normalize_key(attrs.get("friendly_name", ""))
+            if not entity_id:
+                continue
+            eid_key = normalize_key(entity_id)
+            if "goodwe" not in eid_key and "goodwe" not in friendly:
+                continue
+            if serial and serial not in eid_key and serial not in friendly:
+                # Metadata attributes can still prove ownership.
+                attr_serial = serial_slug(attrs.get("serial_number") or attrs.get("goodwe_serial"))
+                if attr_serial != serial:
+                    continue
+            result.append(state)
+        return result
+
+    def _find_by_suffixes(
+        self,
+        domains: tuple[str, ...],
+        suffixes: tuple[str, ...],
+        *,
+        states: list[dict[str, Any]] | None = None,
+    ) -> str:
+        candidates = states if states is not None else self._goodwe_states()
+        serial = serial_slug(self.serial)
+        ranked: list[tuple[int, str]] = []
+        for state in candidates:
+            entity_id = str(state.get("entity_id") or "")
+            if not entity_id or entity_id.split(".", 1)[0] not in domains:
+                continue
+            key = normalize_key(entity_id.split(".", 1)[1])
+            attrs = state.get("attributes") or {}
+            friendly = normalize_key(attrs.get("friendly_name", ""))
+            for index, suffix in enumerate(suffixes):
+                suffix_key = normalize_key(suffix)
+                if key.endswith(suffix_key) or friendly.endswith(suffix_key):
+                    score = 100 - index
+                    if serial and serial in key:
+                        score += 50
+                    if str(state.get("state", "")).lower() not in ("unknown", "unavailable"):
+                        score += 5
+                    ranked.append((score, entity_id))
+                    break
+        if not ranked:
+            return ""
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return ranked[0][1]
+
+    def _resolve_explicit(
+        self,
+        raw: str,
+        domains: tuple[str, ...],
+        suffixes: tuple[str, ...],
+    ) -> str:
+        raw = str(raw or "").strip()
+        if raw and raw.lower() != "auto":
+            return raw
+        return self._find_by_suffixes(domains, suffixes)
+
+    def refresh(self) -> None:
+        if not AUTO_ENTITY_DISCOVERY and self.entities:
+            return
+        inventory = ha_get_all_states()
+        if not inventory:
+            return
+        self._inventory = inventory
+
+        # Serial metadata sensor is deliberately searched without a serial filter.
+        if not self.serial:
+            serial_entity = self._find_by_suffixes(
+                ("sensor",),
+                ("inverter_serial_number", "serial_number", "serial"),
+                states=[
+                    state
+                    for state in inventory
+                    if "goodwe" in normalize_key(state.get("entity_id", ""))
+                ],
+            )
+            if serial_entity:
+                serial_state = next(
+                    (s for s in inventory if s.get("entity_id") == serial_entity), None
+                )
+                if serial_state:
+                    self.serial = normalize_serial(serial_state.get("state"))
+
+        mapping = {
+            "soc": (SOC_ENTITY_RAW, ("sensor",), ("battery_state_of_charge", "battery_soc")),
+            "mode": (MODE_ENTITY_RAW, ("sensor", "select"), ("battery_mode", "ems_mode")),
+            "pv": (PV_ENTITY_RAW, ("sensor",), ("pv_power", "ppv")),
+            "grid": (GRID_ENTITY_RAW, ("sensor",), ("active_power_total", "active_power", "pgrid")),
+            "battery_power": (BATTERY_POWER_ENTITY_RAW, ("sensor",), ("battery_power", "pbattery1", "pbattery")),
+            "phase": (PHASE_ENTITY_RAW, ("sensor",), ("inverter_nr_phase", "inverter_phase_count", "phase_count")),
+            "serial": (SERIAL_ENTITY_RAW, ("sensor",), ("inverter_serial_number", "serial_number")),
+            "ip": (IP_ENTITY_RAW, ("sensor",), ("inverter_ip_address", "ip_address")),
+            "mac": (MAC_ENTITY_RAW, ("sensor",), ("inverter_mac_address", "mac_address")),
+            "last_seen": (LAST_SEEN_ENTITY_RAW, ("sensor",), ("inverter_last_seen", "last_seen")),
+            "ems_mode": (EMS_MODE_ENTITY_RAW, ("select",), ("ems_mode",)),
+            "ems_power": (EMS_POWER_NUMBER_RAW, ("number",), ("ems_power_limit", "eco_mode_power")),
+            "dod_holding": (DOD_HOLDING_SWITCH_RAW, ("switch",), ("dod_holding_switch", "dod_holding")),
+            "backup_supply": (BACKUP_SUPPLY_SWITCH_RAW, ("switch",), ("backup_supply_switch", "backup_supply")),
+            "dod": (DOD_NUMBER_RAW, ("number",), ("battery_discharge_depth_offline", "depth_of_discharge")),
+            "dod_on_grid": (DOD_ON_GRID_NUMBER_RAW, ("number",), ("battery_discharge_depth", "depth_of_discharge_on_grid")),
+            "operation_mode": (OPERATION_MODE_SELECT_RAW, ("select",), ("operation_mode",)),
+            "grid_export_limit": (GRID_EXPORT_LIMIT_ENTITIES_RAW, ("number",), ("grid_export_limit", "net_exportlimiet")),
+            "grid_export_switch": (GRID_EXPORT_LIMIT_SWITCHES_RAW, ("switch",), ("grid_export_limit_switch",)),
+        }
+        for key, (raw, domains, suffixes) in mapping.items():
+            resolved = self._resolve_explicit(raw, domains, suffixes)
+            if resolved:
+                self.entities[key] = resolved
+
+        # Metadata values.
+        for key, attribute in (
+            ("serial", "serial"),
+            ("ip", "ip_address"),
+            ("mac", "mac_address"),
+            ("last_seen", "last_seen"),
+        ):
+            entity_id = self.entity(key)
+            state = next((s for s in inventory if s.get("entity_id") == entity_id), None)
+            if state and str(state.get("state", "")).lower() not in ("unknown", "unavailable"):
+                value = str(state.get("state") or "").strip()
+                if key == "serial" and value:
+                    self.serial = normalize_serial(value)
+                elif key == "ip":
+                    self.ip_address = value or None
+                elif key == "mac":
+                    self.mac_address = value or None
+                elif key == "last_seen":
+                    self.last_seen = value or None
+
+        phase_state = ha_get_state(self.entity("phase")) if self.entity("phase") else None
+        phase = parse_int(phase_state.get("state") if phase_state else None, 0)
+        if phase in (1, 3):
+            self.phase_count = phase
+        else:
+            # Fallback: L2/L3 power sensors mean a three phase inverter.
+            goodwe_states = self._goodwe_states()
+            has_l2_l3 = any(
+                re.search(r"(?:active_power|pgrid)[_ ]?(?:l?2|l?3)$", normalize_key(s.get("entity_id", "")))
+                and str(s.get("state", "")).lower() not in ("unknown", "unavailable")
+                for s in goodwe_states
+            )
+            self.phase_count = 3 if has_l2_l3 else 1
+
+        if DEBUG:
+            log(
+                f"Entity discovery: serial={self.serial or '?'} phases={self.phase_count} "
+                f"ip={self.ip_address or '?'} mac={self.mac_address or '?'} entities={self.entities}"
+            )
+
+
+ENTITY_MAP = EntityMap()
+
+
+def resolved_entities(key: str, raw: str = "") -> list[str]:
+    # An explicitly configured entity is an operator override and must win over
+    # automatic discovery. This is especially important when the fuse sensor is
+    # a site meter rather than the GoodWe grid-power sensor.
+    if raw and raw.lower() != "auto":
+        return split_entities(raw)
+    resolved = ENTITY_MAP.entity(key)
+    if resolved:
+        return split_entities(resolved)
+    return []
+
+
+def phase_count() -> int:
+    return ENTITY_MAP.phase_count if ENTITY_MAP.phase_count in (1, 3) else 1
+
+
+def phase_charge_thresholds() -> tuple[float, float]:
+    trigger = parse_float(CHARGE_BLOCK_TRIGGER_RAW)
+    release = parse_float(CHARGE_BLOCK_RELEASE_RAW)
+    if trigger is None:
+        trigger = -8000.0 if phase_count() == 3 else -3500.0
+    if release is None:
+        release = -5000.0 if phase_count() == 3 else -2000.0
+    return trigger, release
+
+
+def phase_export_limit() -> int:
+    return 5000 if phase_count() == 3 else 3000
+
+
+# ---------------------------------------------------------------------------
+# HA number/select/switch helpers
+# ---------------------------------------------------------------------------
+
+
 def number_entity_attrs(entity_id: str) -> dict[str, Any]:
     state = ha_get_state(entity_id)
-    if not state:
-        return {}
-    attrs = state.get("attributes") or {}
+    attrs = state.get("attributes") if state else None
     return attrs if isinstance(attrs, dict) else {}
 
 
-def number_entity_max(entity_id: str) -> float | None:
+def number_limit(entity_id: str, keys: tuple[str, ...]) -> float | None:
     attrs = number_entity_attrs(entity_id)
-    for key in ("max", "max_value", "native_max_value"):
-        val = parse_float(attrs.get(key))
-        if val is not None:
-            return val
+    for key in keys:
+        value = parse_float(attrs.get(key))
+        if value is not None:
+            return value
     return None
-
-
-def number_entity_min(entity_id: str) -> float | None:
-    attrs = number_entity_attrs(entity_id)
-    for key in ("min", "min_value", "native_min_value"):
-        val = parse_float(attrs.get(key))
-        if val is not None:
-            return val
-    return None
-
-
-def number_entity_unit(entity_id: str) -> str:
-    attrs = number_entity_attrs(entity_id)
-    for key in ("unit_of_measurement", "native_unit_of_measurement"):
-        unit = attrs.get(key)
-        if unit:
-            return str(unit)
-    return ""
 
 
 def clamp_number_value(entity_id: str, value: float) -> float:
+    minimum = number_limit(entity_id, ("min", "min_value", "native_min_value"))
+    maximum = number_limit(entity_id, ("max", "max_value", "native_max_value"))
     original = value
-    min_value = number_entity_min(entity_id)
-    max_value = number_entity_max(entity_id)
-
-    if min_value is not None and value < min_value:
-        value = min_value
-    if max_value is not None and value > max_value:
-        value = max_value
-
-    if abs(value - original) > 0.001:
-        log(f"Number {entity_id}: requested {original:g}, clamped to {value:g}")
+    if minimum is not None:
+        value = max(value, minimum)
+    if maximum is not None:
+        value = min(value, maximum)
+    if DEBUG and abs(value - original) > 0.001:
+        log(f"Number {entity_id}: clamped {original:g} to {value:g}")
     return value
 
 
-def resolve_number_target(entity_id: str, spec: str, server_power: int | None = None) -> float | None:
-    text = str(spec or "").strip().lower()
-
-    if text in ("server_power", "server_power_w", "power", "power_w", "watt", "watts"):
-        power = server_power if server_power and server_power > 0 else POWER
-        return float(power)
-
-    direct = parse_float(text)
-    if direct is not None:
-        return direct
-
-    if text in ("max", "maximum", "native_max"):
-        return number_entity_max(entity_id)
-
-    if text in ("min", "minimum", "native_min"):
-        return number_entity_min(entity_id)
-
-    return None
-
-
-def ha_set_number_value(entity_id: str, value: float) -> bool:
-    current_state = ha_get_state(entity_id)
-    if current_state:
-        cur = parse_float(current_state.get("state"))
-        if cur is not None and abs(cur - value) < 0.001:
-            if DEBUG:
-                log(f"Number {entity_id} already {cur:g}; skip")
-            return True
-
+def ha_set_number_value(entity_id: str, value: float, tolerance: float = 0.01) -> bool:
+    current = ha_get_state(entity_id)
+    current_value = parse_float(current.get("state") if current else None)
+    if current_value is not None and abs(current_value - value) <= tolerance:
+        return True
     return ha_call_service("number", "set_value", {"entity_id": entity_id, "value": value})
 
 
 def normalize_select_option(entity_id: str, requested_option: str) -> str | None:
-    option = str(requested_option or "").strip()
+    option = normalize_ems_option(requested_option)
     if not option:
         return None
-
     state = ha_get_state(entity_id)
     if not state:
         return option
-
-    current = str(state.get("state", "")).strip()
-    if current == option or normalize_key(current) == normalize_key(option):
-        return current if current else option
-
+    current = str(state.get("state") or "").strip()
     attrs = state.get("attributes") or {}
     options = attrs.get("options") or []
-    if isinstance(options, list):
-        requested_key = normalize_key(option)
-
-        for available in options:
-            available_text = str(available).strip()
-            if available_text == option:
-                return available_text
-
-        for available in options:
-            available_text = str(available).strip()
-            if available_text.lower() == option.lower():
-                log(f"EMS option '{option}' matched available option '{available_text}'")
-                return available_text
-
-        for available in options:
-            available_text = str(available).strip()
-            if normalize_key(available_text) == requested_key:
-                log(f"EMS option '{option}' matched available option '{available_text}'")
-                return available_text
-
-        if options:
-            log(f"WARN: EMS option '{option}' not in available options for {entity_id}: {options}")
-
+    requested_key = normalize_key(option)
+    aliases = {normalize_key(item): str(item) for item in options if str(item).strip()}
+    if requested_key in aliases:
+        return aliases[requested_key]
+    if normalize_key(current) == requested_key:
+        return current
+    # Some integrations still expose legacy labels. Prefer their canonical
+    # option only when charge_battery/discharge_battery is not available.
+    reverse_aliases = {
+        "charge_battery": ("import_ac", "buy_power"),
+        "discharge_battery": ("export_ac", "sell_power"),
+        "battery_standby": ("standby",),
+    }
+    for alias in reverse_aliases.get(requested_key, ()):
+        if alias in aliases:
+            return aliases[alias]
+    if options:
+        log(f"WARN: option '{option}' not exposed by {entity_id}: {options}")
     return option
 
 
-def ha_select_option(entity_id: str, option: str) -> tuple[bool, str | None]:
-    selected_option = normalize_select_option(entity_id, option)
-    if not selected_option:
-        log(f"WARN: empty EMS option for {entity_id}; skip")
-        return False, None
-
-    current_state = ha_get_state(entity_id)
-    if current_state and str(current_state.get("state", "")).strip() == selected_option:
-        if DEBUG:
-            log(f"EMS mode {entity_id} already '{selected_option}'; skip")
-        return True, selected_option
-
-    ok = ha_call_service(
-        "select",
-        "select_option",
-        {"entity_id": entity_id, "option": selected_option},
-    )
-    return ok, selected_option
-
-
-def parse_switch_target(value: str) -> bool | None:
-    text = str(value or "").strip().lower()
-    if text in ("", "none", "skip", "disabled"):
-        return None
-    if text in ("1", "true", "yes", "on", "aan"):
-        return True
-    if text in ("0", "false", "no", "off", "uit"):
+def ha_select_option(entity_id: str, option: str) -> bool:
+    selected = normalize_select_option(entity_id, option)
+    if not selected:
         return False
-    log(f"WARN: invalid switch target {value!r}; use on/off/skip")
-    return None
+    current = ha_get_state(entity_id)
+    if current and normalize_key(current.get("state")) == normalize_key(selected):
+        return True
+    return ha_call_service(
+        "select", "select_option", {"entity_id": entity_id, "option": selected}
+    )
 
 
 def ha_set_switch(entity_id: str, desired_state: str) -> bool:
-    desired = parse_switch_target(desired_state)
+    desired = parse_bool_value(desired_state)
     if desired is None:
-        if DEBUG:
-            log(f"Switch {entity_id}: target={desired_state!r}; skip")
         return True
-
-    state = ha_get_state(entity_id)
-    wanted_state_text = "on" if desired else "off"
-    if state and str(state.get("state", "")).strip().lower() == wanted_state_text:
-        if DEBUG:
-            log(f"Switch {entity_id} already {wanted_state_text}; skip")
+    wanted = "on" if desired else "off"
+    current = ha_get_state(entity_id)
+    if current and str(current.get("state") or "").lower() == wanted:
         return True
+    return ha_call_service(
+        "switch", "turn_on" if desired else "turn_off", {"entity_id": entity_id}
+    )
 
-    service = "turn_on" if desired else "turn_off"
-    ok = ha_call_service("switch", service, {"entity_id": entity_id})
-    if ok:
-        log(f"Switch {entity_id} => {wanted_state_text}")
+
+def set_numbers(key: str, raw: str, value: float, label: str) -> bool:
+    entities = resolved_entities(key, raw)
+    if not entities:
+        if DEBUG:
+            log(f"{label}: unsupported/not found")
+        return True
+    ok_all = True
+    for entity_id in entities:
+        target = clamp_number_value(entity_id, value)
+        ok = ha_set_number_value(entity_id, target)
+        ok_all = ok_all and ok
+        if not ok:
+            log(f"WARN: failed {label} {entity_id} => {target:g}")
+    return ok_all
+
+
+def set_switches(key: str, raw: str, desired: str, label: str) -> bool:
+    entities = resolved_entities(key, raw)
+    if not entities:
+        if DEBUG:
+            log(f"{label}: unsupported/not found")
+        return True
+    ok_all = True
+    for entity_id in entities:
+        ok = ha_set_switch(entity_id, desired)
+        ok_all = ok_all and ok
+        if not ok:
+            log(f"WARN: failed {label} {entity_id} => {desired}")
+    return ok_all
+
+
+def set_selects(key: str, raw: str, option: str, label: str) -> bool:
+    entities = resolved_entities(key, raw)
+    if not entities:
+        if DEBUG:
+            log(f"{label}: unsupported/not found")
+        return True
+    ok_all = True
+    for entity_id in entities:
+        ok = ha_select_option(entity_id, option)
+        ok_all = ok_all and ok
+        if not ok:
+            log(f"WARN: failed {label} {entity_id} => {option}")
+    return ok_all
+
+
+# ---------------------------------------------------------------------------
+# Backup automation
+# ---------------------------------------------------------------------------
+
+
+def backup_yaml_content_ok(content: str) -> bool:
+    return all(
+        marker in content
+        for marker in (
+            "alias: Auto update everything",
+            "backup.create_automatic",
+            "update.install",
+            "entity_id: all",
+        )
+    )
+
+
+def ensure_backup_yaml() -> dict[str, Any]:
+    path = str(BACKUP_YAML_PATH or "/config/backup.yaml").strip()
+    status: dict[str, Any] = {
+        "backup_yaml_path": path,
+        "backup_yaml_ok": None,
+        "backup_yaml_updated_at": None,
+    }
+    if not BACKUP_YAML_CHECK_ENABLED:
+        return status
+    try:
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        changed = False
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as handle:
+                current = handle.read()
+            if not backup_yaml_content_ok(current):
+                content = (
+                    BACKUP_YAML_CONTENT
+                    if BACKUP_YAML_OVERWRITE
+                    else current.rstrip() + "\n\n# DWARS auto update automation\n" + BACKUP_YAML_CONTENT
+                )
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(content)
+                changed = True
+        else:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(BACKUP_YAML_CONTENT)
+            changed = True
+        status["backup_yaml_ok"] = True
+        status["backup_yaml_updated_at"] = int(
+            time.time() if changed else os.path.getmtime(path)
+        )
+    except Exception as exc:
+        status["backup_yaml_ok"] = False
+        status["backup_yaml_error"] = str(exc)
+        log(f"WARN: backup.yaml check failed: {exc}")
+    return status
+
+
+# ---------------------------------------------------------------------------
+# Mandatory inverter defaults and BMS override
+# ---------------------------------------------------------------------------
+
+
+def inverter_settings_from_action(action: dict[str, Any]) -> dict[str, Any]:
+    settings = action.get("inverter_settings")
+    if not isinstance(settings, dict):
+        settings = nested_get(action, ["agent_config", "inverter"])
+    return settings if isinstance(settings, dict) else {}
+
+
+def action_reserve_soc(action: dict[str, Any]) -> float | None:
+    settings = inverter_settings_from_action(action)
+    for value in (
+        settings.get("reserve_soc_pct"),
+        action.get("reserve_soc_pct"),
+        action.get("battery_reserve_pct"),
+    ):
+        parsed = parse_float(value)
+        if parsed is not None:
+            return min(100.0, max(0.0, parsed))
+    return None
+
+
+def apply_managed_defaults(action: dict[str, Any]) -> None:
+    if not HA_CONTROL_ENABLED or DISABLE_HA:
+        return
+    settings = inverter_settings_from_action(action)
+    reserve_soc = action_reserve_soc(action)
+
+    # BMS/EMS reserve always overrides DOD: reserve 30% -> DOD 70%.
+    if reserve_soc is not None:
+        dod = max(0.0, min(100.0, 100.0 - reserve_soc))
+        dod_on_grid = dod
     else:
-        log(f"WARN: failed to set switch {entity_id} => {wanted_state_text}")
-    return ok
+        dod = parse_float(settings.get("depth_of_discharge_pct"))
+        dod_on_grid = parse_float(settings.get("depth_of_discharge_on_grid_pct"))
+        if dod is None:
+            dod = float(DEFAULT_DOD)
+        if dod_on_grid is None:
+            dod_on_grid = float(DEFAULT_DOD_ON_GRID)
+
+    if OVERRIDE_DEFAULT_VALUES:
+        # Local configured defaults are intentional; reserve remains authoritative.
+        if reserve_soc is None:
+            dod = float(DEFAULT_DOD)
+            dod_on_grid = float(DEFAULT_DOD_ON_GRID)
+        dod_holding = DEFAULT_DOD_HOLDING
+        backup_supply = DEFAULT_BACKUP_SUPPLY
+        operation_mode = DEFAULT_OPERATION_MODE
+    else:
+        dod_holding = str(settings.get("dod_holding", "off"))
+        backup_supply = str(settings.get("backup_supply", "on"))
+        operation_mode = str(settings.get("operation_mode", "general"))
+
+    set_switches("dod_holding", DOD_HOLDING_SWITCH_RAW, dod_holding, "DOD holding")
+    set_switches("backup_supply", BACKUP_SUPPLY_SWITCH_RAW, backup_supply, "backup supply")
+    set_numbers("dod", DOD_NUMBER_RAW, dod, "depth of discharge")
+    set_numbers("dod_on_grid", DOD_ON_GRID_NUMBER_RAW, dod_on_grid, "depth of discharge on-grid")
+    set_selects(
+        "operation_mode",
+        OPERATION_MODE_SELECT_RAW,
+        normalize_key(operation_mode) or "general",
+        "operation mode",
+    )
 
 
-# ========================
-# HA GoodWe EMS control
-# ========================
+# ---------------------------------------------------------------------------
+# EMS mode and fuse protection
+# ---------------------------------------------------------------------------
 
-def read_charge_block_sensor() -> float | None:
-    """Read the configured charge-block sensor from Home Assistant."""
-    entity_id = str(CHARGE_BLOCK_SENSOR or "").strip()
-    if not entity_id:
-        return None
+charge_block_active = False
+charge_block_until_ts = 0.0
+last_server_mode = 7
+last_server_power = 0
+last_action: dict[str, Any] = {}
 
+
+def read_entity_number(entity_id: str) -> float | None:
     state = ha_get_state(entity_id)
-    if not state:
-        if DEBUG:
-            log(f"Charge block: sensor {entity_id} unavailable")
-        return None
+    return parse_float(state.get("state") if state else None)
 
-    value = parse_float(state.get("state"))
-    if value is None and DEBUG:
-        log(f"Charge block: sensor {entity_id} has non-numeric state {state.get('state')!r}")
-    return value
+
+def charge_block_sensor_entity() -> str:
+    entities = resolved_entities("grid", CHARGE_BLOCK_SENSOR_RAW)
+    return entities[0] if entities else ""
 
 
 def update_charge_block_state() -> tuple[bool, float | None, str]:
-    """Update and return the charge-block latch state.
-
-    The block is triggered when the sensor is below CHARGE_BLOCK_TRIGGER_BELOW_W.
-    Once active, it is only released when both conditions are true:
-    - the minimum block duration has elapsed
-    - the sensor is above CHARGE_BLOCK_RELEASE_ABOVE_W
-    """
     global charge_block_active, charge_block_until_ts
-
     if not CHARGE_BLOCK_ENABLED:
-        if charge_block_active:
-            log("Charge block disabled by configuration; releasing active block")
         charge_block_active = False
         charge_block_until_ts = 0.0
         return False, None, "disabled"
 
-    sensor_value = read_charge_block_sensor()
-    now = time.time()
+    entity_id = charge_block_sensor_entity()
+    value = read_entity_number(entity_id) if entity_id else None
+    trigger, release = phase_charge_thresholds()
+    now = time.monotonic()
 
-    if sensor_value is None:
-        if charge_block_active:
-            remaining = max(0, int(round(charge_block_until_ts - now)))
-            if DEBUG:
-                log(f"Charge block remains active: sensor unavailable, min_remaining={remaining}s")
-            return True, None, "sensor_unavailable_keep_active"
-        return False, None, "sensor_unavailable"
+    if value is None:
+        return charge_block_active, None, "sensor_unavailable"
 
-    was_active = charge_block_active
-
-    if sensor_value < CHARGE_BLOCK_TRIGGER_BELOW_W:
+    if value < trigger:
+        if not charge_block_active:
+            log(
+                f"Charge block ACTIVE: {entity_id}={value:g} W, threshold={trigger:g} W"
+            )
         charge_block_active = True
         charge_block_until_ts = max(charge_block_until_ts, now + CHARGE_BLOCK_DURATION_SEC)
-        if not was_active:
-            log(
-                "Charge block ACTIVE: "
-                f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W is below {CHARGE_BLOCK_TRIGGER_BELOW_W:g}W; "
-                f"charging blocked for at least {CHARGE_BLOCK_DURATION_SEC}s and until above "
-                f"{CHARGE_BLOCK_RELEASE_ABOVE_W:g}W"
-            )
-        elif DEBUG:
-            remaining = max(0, int(round(charge_block_until_ts - now)))
-            log(
-                "Charge block still active: "
-                f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W below trigger, min_remaining={remaining}s"
-            )
-        return True, sensor_value, "trigger"
+        return True, value, "trigger"
 
-    if not charge_block_active:
-        return False, sensor_value, "inactive"
-
-    min_duration_done = now >= charge_block_until_ts
-    release_threshold_done = sensor_value > CHARGE_BLOCK_RELEASE_ABOVE_W
-
-    if min_duration_done and release_threshold_done:
+    if charge_block_active and now >= charge_block_until_ts and value > release:
         charge_block_active = False
         charge_block_until_ts = 0.0
         log(
-            "Charge block RELEASED: "
-            f"{CHARGE_BLOCK_SENSOR}={sensor_value:g}W is above {CHARGE_BLOCK_RELEASE_ABOVE_W:g}W "
-            "and minimum block duration has elapsed"
+            f"Charge block RELEASED: {entity_id}={value:g} W, release={release:g} W"
         )
-        return False, sensor_value, "released"
+        return False, value, "released"
 
-    remaining = max(0, int(round(charge_block_until_ts - now)))
-    if DEBUG:
-        reasons = []
-        if not min_duration_done:
-            reasons.append(f"min_remaining={remaining}s")
-        if not release_threshold_done:
-            reasons.append(f"sensor_not_above_release={sensor_value:g}W<={CHARGE_BLOCK_RELEASE_ABOVE_W:g}W")
-        log(f"Charge block remains active: {', '.join(reasons)}")
-    return True, sensor_value, "latched"
+    return charge_block_active, value, "latched" if charge_block_active else "inactive"
 
 
-def set_ems_power(server_mode: int, server_power: int) -> bool:
-    if server_mode not in EMS_SET_POWER_MODES:
+def set_ems_power(server_mode: int, server_power: int, force: bool = False) -> bool:
+    if not force and server_mode not in EMS_SET_POWER_MODES:
         return True
-
-    entities = split_entities(EMS_POWER_NUMBER)
+    entities = resolved_entities("ems_power", EMS_POWER_NUMBER_RAW)
     if not entities:
-        if DEBUG:
-            log(f"EMS power: no HA_EMS_POWER_NUMBER configured; skip for server mode {server_mode}")
-        return True
-
+        return False
+    power = float(server_power if server_power > 0 else POWER)
     ok_all = True
     for entity_id in entities:
-        target = resolve_number_target(entity_id, EMS_POWER_VALUE_SPEC, server_power)
-        if target is None:
-            log(f"WARN: could not resolve EMS power target '{EMS_POWER_VALUE_SPEC}' for {entity_id}; skip")
-            ok_all = False
-            continue
+        target = power
+        spec = normalize_key(EMS_POWER_VALUE_SPEC)
+        if spec in ("max", "maximum", "native_max"):
+            target = number_limit(entity_id, ("max", "max_value", "native_max_value")) or power
+        elif parse_float(EMS_POWER_VALUE_SPEC) is not None:
+            target = float(parse_float(EMS_POWER_VALUE_SPEC) or power)
         target = clamp_number_value(entity_id, target)
-        ok = ha_set_number_value(entity_id, target)
-        ok_all = ok_all and ok
-        unit = number_entity_unit(entity_id)
-        suffix = f" {unit}" if unit else ""
-        if ok:
-            log(f"EMS power {entity_id} => {target:g}{suffix}")
-        else:
-            log(f"WARN: failed to set EMS power {entity_id} => {target:g}{suffix}")
-
+        ok_all = ha_set_number_value(entity_id, target) and ok_all
     return ok_all
 
 
 def set_ems_modes(option: str) -> bool:
-    """Set one or more HA select entities to the requested EMS option.
-
-    EMS_MODE_ENTITY may contain a single entity_id or a comma/semicolon/space/newline
-    separated list. Each select is normalized independently because different GoodWe
-    inverters can expose slightly different option labels/values.
-    """
-    entities = split_entities(EMS_MODE_ENTITY)
-    if not entities:
-        log("WARN: HA_EMS_MODE_SELECT is empty; cannot set EMS mode")
-        return False
-
-    ok_all = True
-    for entity_id in entities:
-        ok, selected_option = ha_select_option(entity_id, option)
-        ok_all = ok_all and ok
-        if ok:
-            log(f"EMS mode {entity_id} => {selected_option or option}")
-        else:
-            log(f"WARN: failed to set EMS mode {entity_id} => {selected_option or option}")
-
-    return ok_all
+    return set_selects("ems_mode", EMS_MODE_ENTITY_RAW, normalize_ems_option(option), "EMS mode")
 
 
-def apply_battery_control_from_home_assistant(server_mode: int, server_power: int) -> bool:
+def apply_battery_control(server_mode: int, server_power: int) -> bool:
     if not HA_CONTROL_ENABLED:
-        if DEBUG:
-            log("HA battery control disabled; skip EMS mode")
         return False
-
-    block_active, block_sensor_value, block_reason = update_charge_block_state()
-    charge_request_blocked = block_active and server_mode in CHARGE_BLOCK_MODES
-
-    if charge_request_blocked:
-        option = CHARGE_BLOCK_FALLBACK_OPTION
-        skip_power = True
+    block, value, reason = update_charge_block_state()
+    if block and server_mode in CHARGE_BLOCK_MODES:
         log(
-            "Charge block: blocking charge request "
-            f"server_mode={server_mode}; sensor={block_sensor_value if block_sensor_value is not None else '?'}W; "
-            f"reason={block_reason}; forcing EMS option='{option}'"
+            f"Charge request blocked: mode={server_mode}, grid={value}, reason={reason}; "
+            f"forcing {CHARGE_BLOCK_FALLBACK_OPTION}"
         )
-    else:
-        option = EMS_MODE_OPTIONS.get(server_mode)
-        skip_power = False
+        return set_ems_modes(CHARGE_BLOCK_FALLBACK_OPTION)
 
+    option = EMS_MODE_OPTIONS.get(server_mode)
     if not option:
-        log(f"Unknown server mode {server_mode}; no EMS option configured.")
+        log(f"WARN: unknown server mode {server_mode}")
         return False
+    if EMS_SET_POWER_BEFORE_MODE:
+        return set_ems_power(server_mode, server_power) and set_ems_modes(option)
+    return set_ems_modes(option) and set_ems_power(server_mode, server_power)
 
-    select_entities = split_entities(EMS_MODE_ENTITY)
-    power_entities = split_entities(EMS_POWER_NUMBER)
-    if not select_entities:
-        log("WARN: HA_EMS_MODE_SELECT is empty; cannot set EMS mode")
-        return False
 
-    power_text = "skipped_by_charge_block" if skip_power else EMS_POWER_VALUE_SPEC
+def enforce_fast_safety() -> None:
+    block, value, reason = update_charge_block_state()
+    if block and last_server_mode in CHARGE_BLOCK_MODES:
+        if DEBUG:
+            log(f"10 s safety loop: block active ({value}, {reason})")
+        set_ems_modes(CHARGE_BLOCK_FALLBACK_OPTION)
+
+
+# ---------------------------------------------------------------------------
+# Standalone zero-export compensation
+# ---------------------------------------------------------------------------
+
+
+def standalone_settings_from_action(action: dict[str, Any]) -> dict[str, Any]:
+    settings = inverter_settings_from_action(action)
+    nested = settings.get("standalone")
+    nested = nested if isinstance(nested, dict) else {}
+    return {
+        "enabled": settings.get("standalone_enabled", nested.get("enabled")),
+        "pv_entity": settings.get(
+            "standalone_pv_entity", nested.get("external_pv_entity")
+        ),
+        "grid_entity": settings.get(
+            "standalone_grid_entity", nested.get("external_grid_entity")
+        ),
+        "max_charge_w": settings.get(
+            "standalone_max_charge_w", nested.get("max_charge_w")
+        ),
+    }
+
+
+def standalone_enabled_from_action(action: dict[str, Any]) -> bool:
+    remote = parse_bool_value(standalone_settings_from_action(action).get("enabled"))
+    return STANDALONE_ENABLED if remote is None else remote
+
+
+def standalone_entity(raw: str, fallback_key: str) -> str:
+    if raw and raw.lower() != "auto":
+        return split_entities(raw)[0] if split_entities(raw) else ""
+    entities = resolved_entities(fallback_key, "auto")
+    return entities[0] if entities else ""
+
+
+def apply_standalone_zero_export(action: dict[str, Any]) -> None:
+    if not standalone_enabled_from_action(action) or last_server_mode not in (0, 7):
+        return
+    standalone = standalone_settings_from_action(action)
+    grid_entity = str(standalone.get("grid_entity") or "").strip()
+    if not grid_entity:
+        grid_entity = standalone_entity(STANDALONE_GRID_ENTITY_RAW, "grid")
+    grid_w = read_entity_number(grid_entity) if grid_entity else None
+    if grid_w is None:
+        return
+
+    # Existing EMS convention: negative grid power means export.
+    export_w = max(0, int(round(-grid_w)))
+    if export_w <= STANDALONE_DEADBAND_W:
+        set_ems_modes(EMS_MODE_OPTIONS.get(7, "auto"))
+        return
+
+    remote_max = parse_int(standalone.get("max_charge_w"), 0)
+    cap = remote_max or STANDALONE_MAX_CHARGE_W or POWER or phase_export_limit()
+    target = min(export_w, cap) if cap > 0 else export_w
+    block, _value, _reason = update_charge_block_state()
+    if block:
+        set_ems_modes(CHARGE_BLOCK_FALLBACK_OPTION)
+        return
+
+    set_ems_power(3, target, force=True)
+    set_ems_modes("charge_battery")
     log(
-        f"Set EMS mode via HA: server_mode={server_mode} "
-        f"option='{option}' selects={select_entities} power_numbers={power_entities} "
-        f"power_value='{power_text}' api_power={server_power if server_power > 0 else POWER}W"
+        f"Standalone zero-export: grid={grid_w:g} W, charging={target} W "
+        f"(updated every {STANDALONE_INTERVAL}s)"
     )
 
-    if skip_power:
-        return set_ems_modes(option)
 
-    if EMS_SET_POWER_BEFORE_MODE:
-        ok_power = set_ems_power(server_mode, server_power)
-        ok_mode = set_ems_modes(option)
-    else:
-        ok_mode = set_ems_modes(option)
-        ok_power = set_ems_power(server_mode, server_power)
-
-    return ok_power and ok_mode
-
-# ========================
-# Telemetry
-# ========================
-
-def read_from_home_assistant() -> dict[str, Any]:
-    out: dict[str, Any] = {}
-
-    soc = ha_get_state(SOC_ENTITY)
-    if soc and "state" in soc:
-        val = parse_float(soc.get("state"))
-        if val is not None:
-            out["soc_pct"] = val
-
-    mode_state = ha_get_state(MODE_ENTITY) if MODE_ENTITY else None
-    if mode_state and "state" in mode_state:
-        val = parse_int(mode_state.get("state"), default=-999)
-        if val != -999:
-            out["mode"] = val
-        else:
-            name = normalize_key(mode_state.get("state", ""))
-            name_map = {
-                "auto": 1,
-                "charge": 2,
-                "charge_pv": 2,
-                "import_ac": 2,
-                "discharge": 3,
-                "discharge_pv": 3,
-                "export_ac": 3,
-                "standby": 1,
-                "battery_standby": 1,
-            }
-            mapped = name_map.get(name)
-            if mapped is not None:
-                out["mode"] = mapped
-
-    pv = ha_get_state(PV_ENTITY)
-    if pv and "state" in pv:
-        val = parse_float(pv.get("state"))
-        if val is not None:
-            out["pv_power_w"] = int(round(val))
-
-    grid = ha_get_state(GRID_ENTITY)
-    if grid and "state" in grid:
-        val = parse_float(grid.get("state"))
-        if val is not None:
-            out["grid_power_w"] = int(round(val))
-
-    return out
-
-
-def upload_telemetry(payload: dict):
-    if not TEL_URL:
-        if DEBUG:
-            log("No TELEMETRY_URL configured; skipping telemetry")
-        return
-    try:
-        if DEBUG:
-            log(f"POST {TEL_URL} -> {payload}")
-        response = requests.post(TEL_URL, headers=HEADERS_EXT, json=payload, timeout=10, verify=VERIFY_SSL)
-        if DEBUG:
-            log(f"TEL HTTP {response.status_code} {response.text[:200]}")
-        response.raise_for_status()
-    except Exception as exc:
-        log(f"Telemetry upload error: {exc}")
-
-
-# ========================
-# External API / policy
-# ========================
-
-def fetch_next_action() -> dict[str, Any]:
-    if DEBUG:
-        log(f"HTTP GET {API_URL} (verify_ssl={VERIFY_SSL}) …")
-    response = requests.get(API_URL, headers=HEADERS_EXT, timeout=10, verify=VERIFY_SSL)
-    if DEBUG:
-        log(f"HTTP {response.status_code}, len={len(response.content)}")
-    response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, dict):
-        raise ValueError("next_action response is not a JSON object")
-    return data
-
-
-def nested_get(data: dict[str, Any], path: list[str]) -> Any:
-    cur: Any = data
-    for key in path:
-        if not isinstance(cur, dict) or key not in cur:
-            return None
-        cur = cur[key]
-    return cur
+# ---------------------------------------------------------------------------
+# Grid export curtailment
+# ---------------------------------------------------------------------------
 
 
 def action_epex_price(data: dict[str, Any]) -> float | None:
@@ -866,203 +1069,253 @@ def action_epex_price(data: dict[str, Any]) -> float | None:
         data.get("epex_price_eur_kwh"),
         nested_get(data, ["epex", "price_eur_kwh"]),
         data.get("price_eur_kwh"),
-        data.get("epex_now_eur_kwh"),
     ):
-        val = parse_float(value)
-        if val is not None:
-            return val
-
+        parsed = parse_float(value)
+        if parsed is not None:
+            return parsed
     reason = str(data.get("reason") or "")
-    match = re.search(r"EPEX\s+now\s+€\s*(-?\d+(?:[\.,]\d+)?)", reason, re.IGNORECASE)
-    if match:
-        return parse_float(match.group(1))
-    return None
+    match = re.search(r"EPEX\s+now\s+€\s*(-?\d+(?:[\.,]\d+)?)", reason, re.I)
+    return parse_float(match.group(1)) if match else None
 
 
 def action_pv_curtail_threshold(data: dict[str, Any]) -> float:
-    env_threshold = parse_float(PV_CURTAIL_BELOW_EUR_KWH_ENV)
-    if env_threshold is not None:
-        return env_threshold
-
+    env_value = parse_float(PV_CURTAIL_BELOW_EUR_KWH_ENV)
+    if env_value is not None:
+        return env_value
     for value in (
         data.get("pv_curtail_below_eur_kwh"),
         nested_get(data, ["epex", "pv_curtail_below_eur_kwh"]),
     ):
-        val = parse_float(value)
-        if val is not None:
-            return val
-
+        parsed = parse_float(value)
+        if parsed is not None:
+            return parsed
     return -0.12
 
 
-def action_pv_curtail_recommended(data: dict[str, Any]) -> bool | None:
-    for value in (
-        data.get("pv_curtail_recommended"),
-        nested_get(data, ["epex", "pv_curtail_recommended"]),
-    ):
-        val = parse_bool_value(value)
-        if val is not None:
-            return val
-    return None
+def decide_pv_curtail(data: dict[str, Any]) -> bool | None:
+    explicit = parse_bool_value(
+        data.get("pv_curtail_recommended", nested_get(data, ["epex", "pv_curtail_recommended"]))
+    )
+    if explicit is not None:
+        return explicit
+    price = action_epex_price(data)
+    return price < action_pv_curtail_threshold(data) if price is not None else None
 
 
-def decide_pv_curtail(data: dict[str, Any]) -> tuple[bool | None, float | None, float, str]:
-    api_decision = action_pv_curtail_recommended(data)
-    price_now = action_epex_price(data)
-    threshold = action_pv_curtail_threshold(data)
-
-    if api_decision is not None:
-        return api_decision, price_now, threshold, "api"
-
-    if price_now is not None:
-        return price_now < threshold, price_now, threshold, "price"
-
-    reason = str(data.get("reason") or "")
-    if "pv curtailed" in reason.lower():
-        return True, price_now, threshold, "reason"
-
-    return None, price_now, threshold, "unknown"
-
-
-def apply_grid_export_limit_from_action(data: dict[str, Any]):
+def apply_grid_export_limit(data: dict[str, Any]) -> None:
     if not PV_CURTAIL_ENABLED:
         return
-
-    number_entities = split_entities(GRID_EXPORT_LIMIT_ENTITIES)
-    switch_entities = split_entities(GRID_EXPORT_LIMIT_SWITCHES)
-
-    if not number_entities and not switch_entities:
-        if DEBUG:
-            log("Grid export curtailment enabled, but no number/switch entity configured")
-        return
-
-    decision, price_now, threshold, source = decide_pv_curtail(data)
+    decision = decide_pv_curtail(data)
+    # Zonder actuele prijs is de veilige normale toestand de fase-afhankelijke
+    # exportlimiet met de restore-switch aan; laat een oude curtail-status niet staan.
     if decision is None:
-        if DEBUG:
-            log(f"Grid export limit: no PV curtail decision available (price={price_now}, threshold={threshold}, source={source})")
-        return
-
-    action = "curtail" if decision else "restore"
+        decision = False
+    number_entities = resolved_entities("grid_export_limit", GRID_EXPORT_LIMIT_ENTITIES_RAW)
+    switch_entities = resolved_entities("grid_export_switch", GRID_EXPORT_LIMIT_SWITCHES_RAW)
     target_spec = GRID_EXPORT_LIMIT_OFF_VALUE if decision else GRID_EXPORT_LIMIT_DEFAULT_VALUE
-    switch_target = GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE if decision else GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE
-
-    log(
-        "Grid export limit: "
-        f"action={action} number_target={target_spec} switch_target={switch_target} "
-        f"decision={decision} price={price_now if price_now is not None else '?'} "
-        f"threshold={threshold} source={source}"
-    )
-
-    # Set number first. This avoids enabling the switch with an old/unsafe limit.
+    target = parse_float(target_spec)
+    if target is None:
+        target = float(phase_export_limit())
     for entity_id in number_entities:
-        target = resolve_number_target(entity_id, target_spec)
-        if target is None:
-            log(f"WARN: could not resolve grid export limit target '{target_spec}' for {entity_id}; skip number")
-            continue
-        target = clamp_number_value(entity_id, target)
-        ok = ha_set_number_value(entity_id, target)
-        unit = number_entity_unit(entity_id)
-        suffix = f" {unit}" if unit else ""
-        if ok:
-            log(f"Grid export limit number {entity_id} => {target:g}{suffix}")
-        else:
-            log(f"WARN: failed to set grid export limit number {entity_id} => {target:g}{suffix}")
-
-    # Switch on = export limit active. Switch off = normal export allowed.
+        ha_set_number_value(entity_id, clamp_number_value(entity_id, target))
+    switch_target = (
+        GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE
+        if decision
+        else GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE
+    )
     for entity_id in switch_entities:
         ha_set_switch(entity_id, switch_target)
 
 
-# ========================
-# Main loop
-# ========================
+# ---------------------------------------------------------------------------
+# Telemetry/API
+# ---------------------------------------------------------------------------
 
-def loop():
-    token_present = bool(get_ha_token())
-    log(f"Agent up. verify_ssl={VERIFY_SSL} debug={DEBUG}")
-    log(f"Agent metadata: name={AGENT_NAME} version={AGENT_VERSION} type={AGENT_TYPE}")
-    log(f"HA_URL={ha_base_url()} token_present={token_present} disable_ha={DISABLE_HA}")
-    log(
-        "HA battery control: "
-        f"enabled={HA_CONTROL_ENABLED} ems_select_entities='{EMS_MODE_ENTITY}' "
-        f"power_number_entities='{EMS_POWER_NUMBER}' power_value='{EMS_POWER_VALUE_SPEC}' "
-        f"power_modes='{EMS_SET_POWER_MODES_RAW}' set_power_before_mode={EMS_SET_POWER_BEFORE_MODE} "
-        f"map={EMS_MODE_OPTIONS}"
+
+def fetch_next_action() -> dict[str, Any]:
+    response = requests.get(
+        API_URL, headers=HEADERS_EXT, timeout=12, verify=VERIFY_SSL
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError("next_action response is not a JSON object")
+    return data
+
+
+def read_optional_number(entity_id: str) -> int | None:
+    value = read_entity_number(entity_id) if entity_id else None
+    return int(round(value)) if value is not None else None
+
+
+def read_telemetry() -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    soc = read_entity_number(ENTITY_MAP.entity("soc"))
+    if soc is not None:
+        out["soc"] = soc
+    for key, entity_key in (
+        ("pv_power_w", "pv"),
+        ("grid_power_w", "grid"),
+        ("battery_power_w", "battery_power"),
+    ):
+        value = read_optional_number(ENTITY_MAP.entity(entity_key))
+        if value is not None:
+            out[key] = value
+
+    standalone = standalone_settings_from_action(last_action)
+    standalone_pv_entity = str(standalone.get("pv_entity") or "").strip()
+    if not standalone_pv_entity:
+        standalone_pv_entity = STANDALONE_PV_ENTITY_RAW
+    external_pv = read_optional_number(standalone_pv_entity) if standalone_pv_entity else None
+    if external_pv is not None:
+        out["external_pv_power_w"] = external_pv
+        if "pv_power_w" not in out or standalone_enabled_from_action(last_action):
+            out["pv_power_w"] = external_pv
+
+    out.update(
+        {
+            "inverter_serial": ENTITY_MAP.serial or None,
+            # Never report the Raspberry/add-on address as the inverter address.
+            # The integration's persistent network metadata is authoritative.
+            "inverter_ip": ENTITY_MAP.ip_address or None,
+            "inverter_mac": ENTITY_MAP.mac_address or None,
+            "inverter_phases": phase_count(),
+            "inverter_last_seen_at": ENTITY_MAP.last_seen or None,
+        }
+    )
+    return {key: value for key, value in out.items() if value is not None}
+
+
+def local_ip_address() -> str | None:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("1.1.1.1", 53))
+            ip = sock.getsockname()[0]
+            ipaddress.ip_address(ip)
+            return ip
+        finally:
+            sock.close()
+    except OSError:
+        return None
+
+
+def upload_telemetry(payload: dict[str, Any]) -> None:
+    if not TEL_URL:
+        return
+    try:
+        response = requests.post(
+            TEL_URL, headers=HEADERS_EXT, json=payload, timeout=12, verify=VERIFY_SSL
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        log(f"Telemetry upload error: {exc}")
+
+
+def perform_decision_cycle() -> None:
+    global last_action, last_server_mode, last_server_power
+    action = fetch_next_action()
+    last_action = action
+    last_server_mode = parse_int(action.get("mode"), 7)
+    last_server_power = parse_int(action.get("power_watt"), 0)
+
+    # Server config can enable standalone mode or supply its external sensors.
+    settings = inverter_settings_from_action(action)
+    remote_phases = parse_int(settings.get("phase_count"), 0) if settings else 0
+    if remote_phases in (1, 3):
+        # Een expliciete BMS-override of eerder door de agent gerapporteerde fase
+        # is leidend wanneer HA de fase nog niet heeft kunnen detecteren.
+        ENTITY_MAP.phase_count = remote_phases
+    if settings and DEBUG:
+        log(f"BMS inverter settings: {settings}")
+
+    apply_managed_defaults(action)
+    apply_grid_export_limit(action)
+    apply_battery_control(last_server_mode, last_server_power)
+
+    telemetry = read_telemetry()
+    backup = ensure_backup_yaml()
+    heartbeat: dict[str, Any] = {
+        "client_id": CLIENT_ID or None,
+        "reported_at": int(time.time()),
+        "agent_name": AGENT_NAME,
+        "agent_type": AGENT_TYPE,
+        "agent_version": AGENT_VERSION,
+        "ha_version": ha_get_config_version(),
+        "backup_yaml_ok": backup.get("backup_yaml_ok"),
+        "backup_yaml_path": backup.get("backup_yaml_path"),
+        "backup_yaml_updated_at": backup.get("backup_yaml_updated_at"),
+        "battery_mode": last_server_mode,
+        **telemetry,
+    }
+    upload_telemetry(
+        {key: value for key, value in heartbeat.items() if value is not None}
     )
     log(
-        "Grid export curtailment: "
-        f"enabled={PV_CURTAIL_ENABLED} number_entities='{GRID_EXPORT_LIMIT_ENTITIES}' "
-        f"switch_entities='{GRID_EXPORT_LIMIT_SWITCHES}' off={GRID_EXPORT_LIMIT_OFF_VALUE} "
-        f"restore={GRID_EXPORT_LIMIT_DEFAULT_VALUE} switch_curtail={GRID_EXPORT_LIMIT_SWITCH_CURTAIL_STATE} "
-        f"switch_restore={GRID_EXPORT_LIMIT_SWITCH_RESTORE_STATE} "
-        f"threshold='{PV_CURTAIL_BELOW_EUR_KWH_ENV or 'api/default'}'"
+        f"Decision mode={last_server_mode} power={last_server_power}W; "
+        f"serial={ENTITY_MAP.serial or '?'} phases={phase_count()} "
+        f"SOC={telemetry.get('soc', '?')} grid={telemetry.get('grid_power_w', '?')}W "
+        f"PV={telemetry.get('pv_power_w', '?')}W battery={telemetry.get('battery_power_w', '?')}W"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------
+
+
+def loop() -> None:
+    log(
+        f"Agent up version={AGENT_VERSION}; HA={ha_base_url()}; decision={DECISION_INTERVAL}s, "
+        f"safety={SAFETY_INTERVAL}s, standalone={STANDALONE_INTERVAL}s, defaults={DEFAULTS_INTERVAL}s"
     )
     log(
-        "Charge block: "
-        f"enabled={CHARGE_BLOCK_ENABLED} sensor='{CHARGE_BLOCK_SENSOR}' "
-        f"trigger_below={CHARGE_BLOCK_TRIGGER_BELOW_W:g}W "
-        f"release_above={CHARGE_BLOCK_RELEASE_ABOVE_W:g}W "
-        f"duration={CHARGE_BLOCK_DURATION_SEC}s modes={sorted(CHARGE_BLOCK_MODES)} "
-        f"fallback_option='{CHARGE_BLOCK_FALLBACK_OPTION}'"
+        f"Recommended defaults: DOD=90%, DOD on-grid=90%, DOD holding=off, "
+        f"backup supply=on, operation=general, mode1=battery_standby, mode3=charge_battery"
     )
+
+    now = time.monotonic()
+    next_discovery = now
+    next_safety = now
+    next_standalone = now
+    next_defaults = now
+    next_decision = now
 
     while True:
+        now = time.monotonic()
         try:
-            action = fetch_next_action()
-            server_mode = parse_int(action.get("mode"), default=-1)
-            server_power = parse_int(action.get("power_watt"), default=0)
-            reason = str(action.get("reason") or "")
-            if DEBUG:
-                log(f"server_mode={server_mode}, server_power={server_power}, reason={reason[:300]}")
+            if now >= next_discovery:
+                ENTITY_MAP.refresh()
+                next_discovery = now + ENTITY_DISCOVERY_INTERVAL
 
-            # 1) PV/export curtailment through HA number/switch entities.
-            apply_grid_export_limit_from_action(action)
+            if now >= next_safety:
+                enforce_fast_safety()
+                next_safety = now + SAFETY_INTERVAL
 
-            # 2) Battery EMS mode through HA select/number entities.
-            apply_battery_control_from_home_assistant(server_mode, server_power)
+            if now >= next_standalone:
+                apply_standalone_zero_export(last_action)
+                next_standalone = now + STANDALONE_INTERVAL
 
-            # 3) Read telemetry from HA and upload heartbeat.
-            telemetry = read_from_home_assistant() if not DISABLE_HA else {}
-            if telemetry:
-                if "soc_pct" in telemetry:
-                    log(f"SOC from HA: {telemetry['soc_pct']}%")
-                if "mode" in telemetry:
-                    mode_names = {1: "Auto/Standby", 2: "Charge", 3: "Discharge"}
-                    mode_value = telemetry["mode"]
-                    log(f"Mode from HA: {mode_value} ({mode_names.get(mode_value, 'Unknown')})")
-                if "pv_power_w" in telemetry:
-                    log(f"PV power from HA: {telemetry['pv_power_w']} W")
-                if "grid_power_w" in telemetry:
-                    log(f"Grid power from HA: {telemetry['grid_power_w']} W")
+            if now >= next_defaults:
+                # Hardwareveiligheidsdefaults mogen niet afhankelijk zijn van de
+                # bereikbaarheid van de BMS. Met een lege action gelden de lokale
+                # veilige defaults; zodra de API weer antwoordt blijft reserve-SoC
+                # leidend voor beide DOD-waarden.
+                apply_managed_defaults(last_action)
+                apply_grid_export_limit(last_action)
+                next_defaults = now + DEFAULTS_INTERVAL
 
-            backup_status = ensure_backup_yaml()
-            ha_version = ha_get_config_version()
-
-            heartbeat = {
-                "client_id": CLIENT_ID or None,
-                "reported_at": int(time.time()),
-                "agent_name": AGENT_NAME,
-                "agent_type": AGENT_TYPE,
-                "agent_version": AGENT_VERSION,
-                "ha_version": ha_version,
-                "backup_yaml_ok": backup_status.get("backup_yaml_ok"),
-                "backup_yaml_path": backup_status.get("backup_yaml_path"),
-                "backup_yaml_updated_at": backup_status.get("backup_yaml_updated_at"),
-                "soc": float(telemetry["soc_pct"]) if telemetry and "soc_pct" in telemetry else None,
-                "battery_mode": server_mode,
-                "pv_power_w": telemetry.get("pv_power_w") if telemetry else None,
-                "grid_power_w": telemetry.get("grid_power_w") if telemetry else None,
-            }
-
-            payload = {key: value for key, value in heartbeat.items() if value is not None or key == "battery_mode"}
-            upload_telemetry(payload)
+            if now >= next_decision:
+                perform_decision_cycle()
+                next_decision = now + DECISION_INTERVAL
 
         except Exception as exc:
             log(f"ERROR: {exc}")
             if DEBUG:
                 traceback.print_exc()
 
-        time.sleep(INTERVAL)
+        # Small sleep keeps all independent cadences responsive without threads.
+        time.sleep(1.0)
 
 
 if __name__ == "__main__":

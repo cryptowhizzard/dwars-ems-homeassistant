@@ -446,11 +446,9 @@ configure_goodwe_agent() {
     --argjson poll_interval "$(get_opt goodwe_agent_poll_interval 60)" \
     --argjson power_watt "$(get_opt goodwe_agent_power_watt 5000)" \
     --argjson debug "$(get_bool goodwe_agent_debug true)" \
-    --arg ems_mode_select "$(get_opt goodwe_agent_ha_ems_mode_select 'select.goodwe_ems_mode')" \
-    --arg ems_power_number "$(get_opt goodwe_agent_ha_ems_power_number 'number.goodwe_eco_mode_power')" \
-    --arg mode_0_option "$(get_opt goodwe_agent_ha_ems_mode_0_option 'auto')" \
-    --arg grid_limit_number "$(get_opt goodwe_agent_ha_grid_export_limit_number 'number.goodwe_net_exportlimiet')" \
-    --arg grid_limit_switch "$(get_opt goodwe_agent_ha_grid_export_limit_switch 'switch.goodwe_grid_export_limit_switch')" \
+    --arg ha_url "$(get_opt goodwe_agent_ha_url 'http://supervisor/core')" \
+    --arg ha_token "$(get_opt goodwe_agent_ha_token '')" \
+    --argjson override_defaults "$(get_bool goodwe_agent_override_default_values false)" \
     '{
       boot: "auto",
       auto_update: true,
@@ -460,37 +458,82 @@ configure_goodwe_agent() {
         api_key: $api_key,
         client_id: $client_id,
         poll_interval: $poll_interval,
+        safety_interval: 10,
+        standalone_interval: 30,
+        defaults_interval: 60,
+        entity_discovery_interval: 60,
         power_watt: $power_watt,
-        soc_entity: "sensor.goodwe_battery_state_of_charge",
+
+        soc_entity: "auto",
         mode_entity: "",
-        pv_entity: "sensor.goodwe_pv_power",
-        grid_entity: "sensor.goodwe_active_power",
+        pv_entity: "auto",
+        grid_entity: "auto",
+        battery_power_entity: "auto",
+        goodwe_serial_number: "",
+        goodwe_serial_entity: "auto",
+        goodwe_phase_entity: "auto",
+        goodwe_ip_entity: "auto",
+        goodwe_mac_entity: "auto",
+        goodwe_last_seen_entity: "auto",
+        ha_auto_entity_discovery: true,
+
         debug: (if $debug then 1 else 0 end),
-        ha_url: "",
-        ha_token: "",
+        ha_url: $ha_url,
+        ha_token: $ha_token,
         ha_control_enabled: true,
-        ha_ems_mode_select: $ems_mode_select,
-        ha_ems_power_number: $ems_power_number,
-        ha_ems_power_value: "max",
+        ha_ems_mode_select: "auto",
+        ha_ems_power_number: "auto",
+        ha_ems_power_value: "server_power",
         ha_ems_set_power_modes: "3,4",
         ha_ems_set_power_before_mode: true,
-        ha_ems_mode_0_option: $mode_0_option,
-        ha_ems_mode_1_option: $mode_0_option,
-        ha_ems_mode_3_option: "import_ac",
-        ha_ems_mode_4_option: "export_ac",
-        ha_ems_mode_7_option: $mode_0_option,
-        ha_grid_export_limit_number: $grid_limit_number,
-        ha_grid_export_limit_switch: $grid_limit_switch,
+        ha_ems_mode_0_option: "auto",
+        ha_ems_mode_1_option: "battery_standby",
+        ha_ems_mode_3_option: "charge_battery",
+        ha_ems_mode_4_option: "discharge_battery",
+        ha_ems_mode_7_option: "auto",
+
+        override_default_values: $override_defaults,
+        goodwe_default_dod: 90,
+        goodwe_default_dod_on_grid: 90,
+        goodwe_default_dod_holding: "off",
+        goodwe_default_backup_supply: "on",
+        goodwe_default_operation_mode: "general",
+        ha_dod_holding_switch: "auto",
+        ha_backup_supply_switch: "auto",
+        ha_dod_number: "auto",
+        ha_dod_on_grid_number: "auto",
+        ha_operation_mode_select: "auto",
+
+        ha_charge_block_enabled: true,
+        ha_charge_block_sensor: "auto",
+        ha_charge_block_below_w: "auto",
+        ha_charge_block_release_above_w: "auto",
+        ha_charge_block_duration_sec: 300,
+        ha_charge_block_modes: "3",
+        ha_charge_block_fallback_option: "auto",
+
+        ha_grid_export_limit_number: "auto",
+        ha_grid_export_limit_switch: "auto",
         ha_grid_export_limit_off_value: "0",
-        ha_grid_export_limit_default_value: "max",
+        ha_grid_export_limit_default_value: "auto",
         ha_grid_export_limit_switch_curtail_state: "on",
-        ha_grid_export_limit_switch_restore_state: "off",
+        ha_grid_export_limit_switch_restore_state: "on",
         ha_pv_curtail_below_eur_kwh: "",
-        ha_pv_curtail_enabled: true
+        ha_pv_curtail_enabled: true,
+
+        standalone_enabled: false,
+        standalone_pv_entity: "",
+        standalone_grid_entity: "auto",
+        standalone_deadband_w: 150,
+        standalone_max_charge_w: 0,
+
+        backup_yaml_check_enabled: true,
+        backup_yaml_path: "/config/backup.yaml",
+        backup_yaml_overwrite: false
       }
     }')"
 
-  log "GoodWe Agent configureren."
+  log "GoodWe Agent configureren: alleen API-key/HA-token zijn klantgebonden; overige waarden komen automatisch uit BMS en Home Assistant."
   supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
 }
 

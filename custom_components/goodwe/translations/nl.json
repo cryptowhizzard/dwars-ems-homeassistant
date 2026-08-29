@@ -1,43 +1,43 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Device is already configured",
-      "already_in_progress": "Configuration flow is already in progress",
-      "cannot_connect": "Failed to connect"
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+      "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
     },
     "error": {
-      "connection_error": "Failed to connect"
+      "connection_error": "[%key:common::config_flow::error::cannot_connect%]"
     },
     "flow_title": "GoodWe",
     "step": {
       "user": {
         "data": {
-          "host": "Hostname / IP address",
+          "host": "[%key:common::config_flow::data::ip%]",
           "protocol": "Protocol",
           "model_family": "Inverter Family (optional)"
         },
-        "description": "Connect to inverter",
-        "title": "GoodWe inverter"
+        "description": "Zoek een GoodWe-omvormer op het lokale netwerk of voer handmatig een adres in.",
+        "title": "GoodWe-omvormer"
       },
       "manual": {
         "data": {
-          "host": "Hostname / IP address",
+          "host": "[%key:common::config_flow::data::ip%]",
           "protocol": "Protocol",
           "model_family": "Inverter Family (optional)"
         },
-        "description": "No GoodWe inverter was discovered automatically, or you selected manual setup. Enter the inverter IP address.",
-        "title": "GoodWe inverter"
+        "description": "Er is geen GoodWe-omvormer automatisch gevonden. Vul het IP-adres van de omvormer in.",
+        "title": "GoodWe-omvormer handmatig toevoegen"
       },
       "select": {
         "data": {
-          "discovered_inverter": "Discovered inverter"
+          "discovered_inverter": "Gevonden omvormer"
         },
-        "description": "Select the GoodWe inverter to add.",
-        "title": "Discovered GoodWe inverters"
+        "description": "Selecteer de GoodWe-omvormer die je wilt toevoegen.",
+        "title": "Gevonden GoodWe-omvormers"
       },
       "dhcp_confirm": {
-        "description": "GoodWe inverter discovered at {host} with MAC {mac}. Add this inverter?",
-        "title": "Add discovered GoodWe inverter"
+        "description": "GoodWe-omvormer gevonden op {host} met MAC-adres {mac}. Deze omvormer toevoegen?",
+        "title": "Gevonden GoodWe-omvormer toevoegen"
       }
     }
   },
@@ -45,12 +45,6 @@
     "button": {
       "synchronize_clock": {
         "name": "Synchronize inverter clock"
-      },
-      "start_inverter": {
-        "name": "Start inverter"
-      },
-      "stop_inverter": {
-        "name": "Stop inverter"
       }
     },
     "number": {
@@ -72,14 +66,17 @@
       "ems_power_limit": {
         "name": "EMS power limit"
       },
-      "grid_export_limit": {
-        "name": "Grid export limit"
-      },
       "fast_charging_power": {
         "name": "Fast charging power"
       },
       "fast_charging_soc": {
         "name": "Fast charging SoC"
+      },
+      "grid_export_limit": {
+        "name": "Grid export limit"
+      },
+      "soc_upper_limit": {
+        "name": "SoC upper limit"
       }
     },
     "select": {
@@ -109,58 +106,48 @@
           "eco_discharge": "Eco discharge mode",
           "general": "General mode",
           "off_grid": "Off-grid mode",
-          "peak_shaving": "Peak shaving mode",
-          "self_use": "Self Use mode"
-        }
-      }
-    },
-    "sensor": {
-      "grid_in_out_label": {
-        "state": {
-          "0": "Idle",
-          "1": "Exporting",
-          "2": "Importing"
+          "peak_shaving": "Peak shaving mode"
         }
       }
     },
     "switch": {
-      "grid_export_limit_switch": {
-        "name": "Grid export limit switch"
+      "backup_supply_switch": {
+        "name": "Backup supply switch"
+      },
+      "dod_holding_switch": {
+        "name": "DOD holding"
       },
       "fast_charging_switch": {
         "name": "Fast charging switch"
       },
+      "grid_export_limit_switch": {
+        "name": "Grid export limit switch"
+      },
       "load_control": {
         "name": "Load control"
-      },
-      "backup_supply_switch": {
-        "name": "Backup supply"
-      },
-      "dod_holding_switch": {
-        "name": "DOD holding"
       }
     }
   },
   "options": {
     "step": {
       "init": {
+        "title": "Optionele GoodWe-instellingen",
+        "description": "Netwerk-, polling- en DWARS-instellingen",
         "data": {
-          "host": "Hostname / IP Address",
-          "port": "Port (8899/UDP | 502/TCP)",
+          "host": "IP-adres",
+          "port": "Poort (8899/UDP of 502/TCP)",
           "protocol": "Protocol",
-          "keep_alive": "TCP Keep alive",
-          "model_family": "Protocol Family [ET|DT|ES]",
-          "scan_interval": "Scan interval (s)",
-          "network_retries": "Network retry attempts",
-          "network_timeout": "Network request timeout (s)",
-          "modbus_id": "Modbus ID",
-          "default_area": "Default area/room",
-          "auto_load_control": "Enable load control automatically",
-          "pre_scan_enabled": "Pre-scan the local network before discovery",
-          "network_cidr": "Network to pre-scan (CIDR, e.g. 192.168.2.0/24)"
-        },
-        "description": "Specify optional network and DWARS settings",
-        "title": "GoodWe optional settings"
+          "keep_alive": "TCP keep-alive",
+          "model_family": "Omvormerfamilie [ET|DT|ES] (optioneel)",
+          "scan_interval": "Meetinterval (seconden)",
+          "network_retries": "Aantal netwerkherhalingen",
+          "network_timeout": "Netwerktime-out (seconden)",
+          "modbus_id": "Modbus-ID",
+          "default_area": "Standaardruimte",
+          "auto_load_control": "Load control automatisch inschakelen",
+          "pre_scan_enabled": "Lokaal netwerk vóór detectie scannen",
+          "network_cidr": "Te scannen netwerk (CIDR, bijvoorbeeld 192.168.2.0/24)"
+        }
       }
     }
   }

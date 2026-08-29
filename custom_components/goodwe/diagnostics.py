@@ -15,9 +15,22 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     inverter = config_entry.runtime_data.inverter
+    coordinator = config_entry.runtime_data.coordinator
 
     return {
         "config_entry": config_entry.as_dict(),
+        "network_metadata": {
+            "serial_number": coordinator.serial_number,
+            "current_host": coordinator.current_host,
+            "last_known_host": coordinator.last_known_host,
+            "mac_address": coordinator.current_mac or coordinator.last_known_mac,
+            "last_seen": coordinator.last_seen.isoformat()
+            if coordinator.last_seen
+            else None,
+            "phase_count": coordinator.phase_count,
+            "pre_scan_enabled": coordinator.pre_scan_enabled,
+            "network_cidr": coordinator.network_cidr,
+        },
         "inverter": {
             "model_name": inverter.model_name,
             "rated_power": inverter.rated_power,

@@ -20,10 +20,14 @@ from .const import (
     CONF_MAC,
     CONF_MODBUS_ID,
     CONF_MODEL_FAMILY,
+    CONF_NETWORK_CIDR,
     CONF_NETWORK_RETRIES,
     CONF_NETWORK_TIMEOUT,
+    CONF_PRE_SCAN_ENABLED,
     DEFAULT_AREA_NAME,
     DEFAULT_AUTO_LOAD_CONTROL,
+    DEFAULT_NETWORK_CIDR,
+    DEFAULT_PRE_SCAN_ENABLED,
     DOMAIN,
     PLATFORMS,
 )
@@ -59,7 +63,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: GoodweConfigEntry) -> bo
     # If the entry was created manually and no MAC was available yet, try to
     # enrich the entry from the GoodWe broadcast response.
     if not mac:
-        discovered = await async_find_inverter_by_host(hass, host)
+        discovered = await async_find_inverter_by_host(
+            hass,
+            host,
+            pre_scan_enabled=entry.options.get(
+                CONF_PRE_SCAN_ENABLED,
+                entry.data.get(CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED),
+            ),
+            network_cidr=entry.options.get(
+                CONF_NETWORK_CIDR,
+                entry.data.get(CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR),
+            ),
+        )
         if discovered and discovered.mac:
             mac = discovered.mac
             discovery_name = discovered.name
@@ -134,7 +149,19 @@ async def async_connect_entry(
                 host,
                 mac,
             )
-            recovered = await async_find_inverter_by_mac(hass, mac)
+            recovered = await async_find_inverter_by_mac(
+                hass,
+                mac,
+                pre_scan_enabled=entry.options.get(
+                    CONF_PRE_SCAN_ENABLED,
+                    entry.data.get(CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED),
+                ),
+                network_cidr=entry.options.get(
+                    CONF_NETWORK_CIDR,
+                    entry.data.get(CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR),
+                ),
+                preferred_host=host,
+            )
             if recovered:
                 try:
                     inverter, port, protocol = await async_connect_and_detect_port(
@@ -142,12 +169,24 @@ async def async_connect_entry(
                         **connection_options,
                     )
                 except InverterError:
-                    _LOGGER.debug(
-                        "GoodWe MAC recovery found %s but connection still failed",
-                        recovered.host,
-                        exc_info=True,
-                    )
-                else:
+                    try:
+                        inverter, port, protocol = await async_connect_and_detect_port(
+                            host=recovered.host,
+                            protocol=connection_options["protocol"],
+                            port=None,
+                            family=connection_options["family"],
+                            comm_addr=connection_options["comm_addr"],
+                            timeout=connection_options["timeout"],
+                            retries=connection_options["retries"],
+                        )
+                    except InverterError:
+                        _LOGGER.debug(
+                            "GoodWe MAC recovery found %s but connection still failed",
+                            recovered.host,
+                            exc_info=True,
+                        )
+                        inverter = None
+                if inverter is not None:
                     await async_update_network_entry(
                         hass,
                         entry,
@@ -357,7 +396,16 @@ async def async_migrate_entry(
         except InverterError as err:
             raise ConfigEntryNotReady from err
 
-        discovered = await async_find_inverter_by_host(hass, host)
+        discovered = await async_find_inverter_by_host(
+            hass,
+            host,
+            pre_scan_enabled=config_entry.data.get(
+                CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED
+            ),
+            network_cidr=config_entry.data.get(
+                CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR
+            ),
+        )
         mac = discovered.mac if discovered else None
         discovery_name = discovered.name if discovered else None
         new_data = {
@@ -378,6 +426,12 @@ async def async_migrate_entry(
             CONF_AUTO_LOAD_CONTROL: config_entry.data.get(
                 CONF_AUTO_LOAD_CONTROL, DEFAULT_AUTO_LOAD_CONTROL
             ),
+            CONF_PRE_SCAN_ENABLED: config_entry.data.get(
+                CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED
+            ),
+            CONF_NETWORK_CIDR: config_entry.data.get(
+                CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR
+            ),
         }
         hass.config_entries.async_update_entry(
             config_entry, data=new_data, version=2
@@ -392,6 +446,12 @@ async def async_migrate_entry(
             changed = True
         if CONF_AUTO_LOAD_CONTROL not in data:
             data[CONF_AUTO_LOAD_CONTROL] = DEFAULT_AUTO_LOAD_CONTROL
+            changed = True
+        if CONF_PRE_SCAN_ENABLED not in data:
+            data[CONF_PRE_SCAN_ENABLED] = DEFAULT_PRE_SCAN_ENABLED
+            changed = True
+        if CONF_NETWORK_CIDR not in data:
+            data[CONF_NETWORK_CIDR] = DEFAULT_NETWORK_CIDR
             changed = True
         if changed:
             hass.config_entries.async_update_entry(config_entry, data=data)

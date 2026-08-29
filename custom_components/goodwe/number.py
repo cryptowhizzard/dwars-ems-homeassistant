@@ -18,7 +18,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import GoodweConfigEntry
+from homeassistant.util import slugify
+
+from .coordinator import GoodweConfigEntry, GoodweUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,6 +209,7 @@ async def async_setup_entry(
     """Set up the inverter select entities from a config entry."""
     inverter = config_entry.runtime_data.inverter
     device_info = config_entry.runtime_data.device_info
+    coordinator = config_entry.runtime_data.coordinator
 
     entities = []
 
@@ -218,7 +221,9 @@ async def async_setup_entry(
             _LOGGER.debug("Could not read inverter setting %s", description.key)
             continue
 
-        entity = InverterNumberEntity(device_info, description, inverter, current_value)
+        entity = InverterNumberEntity(
+            coordinator, device_info, description, inverter, current_value
+        )
         # Set the max value of grid_export_limit and ems_power_limit (W version)
         if (
             description.key in ("grid_export_limit", "ems_power_limit")
@@ -241,26 +246,30 @@ class InverterNumberEntity(NumberEntity):
 
     def __init__(
         self,
+        coordinator: GoodweUpdateCoordinator,
         device_info: DeviceInfo,
         description: GoodweNumberEntityDescription,
         inverter: Inverter,
         current_value: int,
     ) -> None:
         """Initialize the number inverter setting entity."""
+        self._coordinator = coordinator
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}-{description.key}-{inverter.serial_number}"
+        self._attr_suggested_object_id = (
+            f"goodwe_{slugify(str(inverter.serial_number))}_{slugify(description.key)}"
+        )
         self._attr_device_info = device_info
         self._attr_native_value = float(current_value)
-        self._inverter: Inverter = inverter
 
     async def async_update(self) -> None:
         """Get the current value from inverter."""
-        value = await self.entity_description.getter(self._inverter)
+        value = await self.entity_description.getter(self._coordinator.inverter)
         self._attr_native_value = float(value)
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value to inverter."""
         if self.entity_description.setter:
-            await self.entity_description.setter(self._inverter, int(value))
+            await self.entity_description.setter(self._coordinator.inverter, int(value))
         self._attr_native_value = value
         self.async_write_ha_state()

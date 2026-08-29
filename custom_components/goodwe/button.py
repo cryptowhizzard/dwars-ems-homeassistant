@@ -13,7 +13,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
-from .coordinator import GoodweConfigEntry
+from homeassistant.util import slugify
+
+from .coordinator import GoodweConfigEntry, GoodweUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,6 +59,7 @@ async def async_setup_entry(
     """Set up the inverter button entities from a config entry."""
     inverter = config_entry.runtime_data.inverter
     device_info = config_entry.runtime_data.device_info
+    coordinator = config_entry.runtime_data.coordinator
 
     entities = []
 
@@ -69,6 +72,7 @@ async def async_setup_entry(
         else:
             entities.append(
                 GoodweButtonEntity(
+                    coordinator,
                     device_info,
                     description,
                     inverter,
@@ -87,16 +91,20 @@ class GoodweButtonEntity(ButtonEntity):
 
     def __init__(
         self,
+        coordinator: GoodweUpdateCoordinator,
         device_info: DeviceInfo,
         description: GoodweButtonEntityDescription,
         inverter: Inverter,
     ) -> None:
         """Initialize the inverter operation mode setting entity."""
+        self._coordinator = coordinator
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}-{description.key}-{inverter.serial_number}"
+        self._attr_suggested_object_id = (
+            f"goodwe_{slugify(str(inverter.serial_number))}_{slugify(description.key)}"
+        )
         self._attr_device_info = device_info
-        self._inverter: Inverter = inverter
 
     async def async_press(self) -> None:
         """Triggers the button press service."""
-        await self.entity_description.action(self._inverter)
+        await self.entity_description.action(self._coordinator.inverter)

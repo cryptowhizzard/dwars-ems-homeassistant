@@ -1,8 +1,8 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "slug": "dwars_installer",
-  "description": "Installeert en update DWARS custom components en inverter agents voor GoodWe, SolarEdge of een andere omvormer vanuit één repository.",
+  "description": "Installeert en update DWARS custom components en inverter agents; GoodWe wordt serienummergebonden en met veilige 10/30/60-seconden defaults geconfigureerd.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",
@@ -42,11 +42,11 @@
     "goodwe_agent_poll_interval": 60,
     "goodwe_agent_power_watt": 5000,
     "goodwe_agent_debug": true,
-    "goodwe_agent_ha_ems_mode_select": "select.goodwe_ems_mode",
-    "goodwe_agent_ha_ems_power_number": "number.goodwe_eco_mode_power",
+    "goodwe_agent_ha_ems_mode_select": "auto",
+    "goodwe_agent_ha_ems_power_number": "auto",
     "goodwe_agent_ha_ems_mode_0_option": "auto",
-    "goodwe_agent_ha_grid_export_limit_number": "number.goodwe_net_exportlimiet",
-    "goodwe_agent_ha_grid_export_limit_switch": "switch.goodwe_grid_export_limit_switch",
+    "goodwe_agent_ha_grid_export_limit_number": "auto",
+    "goodwe_agent_ha_grid_export_limit_switch": "auto",
     "solaredge_agent_api_key": "",
     "solaredge_agent_client_id": 1,
     "solaredge_agent_api_url": "https://api.metdezon.nl/bms/api/next_action.php",
@@ -101,7 +101,10 @@
     "force_update_agent_addons": true,
     "restart_agent_addons_after_update": true,
     "addon_update_backup": false,
-    "rebuild_agent_addons_when_repo_changed": true
+    "rebuild_agent_addons_when_repo_changed": true,
+    "goodwe_agent_ha_url": "http://supervisor/core",
+    "goodwe_agent_ha_token": "",
+    "goodwe_agent_override_default_values": false
   },
   "schema": {
     "inverter_type": "list(goodwe|solaredge|both|andere_omvormer)",
@@ -181,7 +184,10 @@
     "force_update_agent_addons": "bool",
     "restart_agent_addons_after_update": "bool",
     "addon_update_backup": "bool",
-    "rebuild_agent_addons_when_repo_changed": "bool"
+    "rebuild_agent_addons_when_repo_changed": "bool",
+    "goodwe_agent_ha_url": "str",
+    "goodwe_agent_ha_token": "str?",
+    "goodwe_agent_override_default_values": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",

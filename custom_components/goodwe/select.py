@@ -19,7 +19,9 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import DOMAIN
-from .coordinator import GoodweConfigEntry
+from homeassistant.util import slugify
+
+from .coordinator import GoodweConfigEntry, GoodweUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,8 +71,10 @@ async def async_setup_entry(
     """Set up the inverter select entities from a config entry."""
     inverter = config_entry.runtime_data.inverter
     device_info = config_entry.runtime_data.device_info
+    coordinator = config_entry.runtime_data.coordinator
 
     supported_modes = await inverter.get_operation_modes(True)
+    operation_entity: InverterOperationModeEntity | None = None
     # read current operating mode from the inverter
     try:
         active_mode = await inverter.get_operation_mode()
@@ -83,7 +87,8 @@ async def async_setup_entry(
     else:
         active_mode_option = _MODE_TO_OPTION.get(active_mode)
         if active_mode_option is not None:
-            entity = InverterOperationModeEntity(
+            operation_entity = InverterOperationModeEntity(
+                coordinator,
                 device_info,
                 OPERATION_MODE,
                 inverter,
@@ -92,7 +97,7 @@ async def async_setup_entry(
                 current_eco_power,
                 current_eco_soc,
             )
-            async_add_entities([entity])
+            async_add_entities([operation_entity])
         else:
             _LOGGER.warning(
                 "Active mode %s not found in Goodwe Inverter Operation Mode Entity. Skipping entity creation",
@@ -104,22 +109,22 @@ async def async_setup_entry(
             DOMAIN,
             f"{DOMAIN}-eco_mode_power-{inverter.serial_number}",
         )
-        if eco_mode_power_entity_id:
+        if eco_mode_power_entity_id and operation_entity is not None:
             async_track_state_change_event(
                 hass,
                 eco_mode_power_entity_id,
-                entity.update_eco_mode_power,
+                operation_entity.update_eco_mode_power,
             )
         eco_mode_soc_entity_id = er.async_get(hass).async_get_entity_id(
             Platform.NUMBER,
             DOMAIN,
             f"{DOMAIN}-eco_mode_soc-{inverter.serial_number}",
         )
-        if eco_mode_soc_entity_id:
+        if eco_mode_soc_entity_id and operation_entity is not None:
             async_track_state_change_event(
                 hass,
                 eco_mode_soc_entity_id,
-                entity.update_eco_mode_soc,
+                operation_entity.update_eco_mode_soc,
             )
 
     # read current EMS mode from the inverter
@@ -130,6 +135,7 @@ async def async_setup_entry(
         _LOGGER.debug("Could not read inverter EMS mode", exc_info=True)
     else:
         entity = InverterEMSModeEntity(
+            coordinator,
             device_info,
             EMS_MODE,
             inverter,
@@ -146,6 +152,7 @@ class InverterOperationModeEntity(SelectEntity):
 
     def __init__(
         self,
+        coordinator: GoodweUpdateCoordinator,
         device_info: DeviceInfo,
         description: SelectEntityDescription,
         inverter: Inverter,
@@ -155,12 +162,15 @@ class InverterOperationModeEntity(SelectEntity):
         current_eco_soc: int,
     ) -> None:
         """Initialize the inverter operation mode setting entity."""
+        self._coordinator = coordinator
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}-{description.key}-{inverter.serial_number}"
+        self._attr_suggested_object_id = (
+            f"goodwe_{slugify(str(inverter.serial_number))}_{slugify(description.key)}"
+        )
         self._attr_device_info = device_info
         self._attr_options = supported_options
         self._attr_current_option = current_mode
-        self._inverter: Inverter = inverter
         self._eco_mode_power = current_eco_power
         self._eco_mode_soc = current_eco_soc
 
@@ -173,7 +183,7 @@ class InverterOperationModeEntity(SelectEntity):
             self._eco_mode_soc,
         )
         try:
-            await self._inverter.set_operation_mode(
+            await self._coordinator.inverter.set_operation_mode(
                 _OPTION_TO_MODE[option], self._eco_mode_power, self._eco_mode_soc
             )
         except InverterError as err:
@@ -186,7 +196,7 @@ class InverterOperationModeEntity(SelectEntity):
 
     async def async_update(self) -> None:
         """Get the current value from inverter."""
-        value = await self._inverter.get_operation_mode()
+        value = await self._coordinator.inverter.get_operation_mode()
         self._attr_current_option = _MODE_TO_OPTION[value]
 
     async def update_eco_mode_power(self, event: Event) -> None:
@@ -204,7 +214,7 @@ class InverterOperationModeEntity(SelectEntity):
             ):
                 _LOGGER.debug("Setting eco mode power to %d", self._eco_mode_power)
                 try:
-                    await self._inverter.set_operation_mode(
+                    await self._coordinator.inverter.set_operation_mode(
                         operation_mode, self._eco_mode_power, self._eco_mode_soc
                     )
                 except InverterError as err:
@@ -229,7 +239,7 @@ class InverterOperationModeEntity(SelectEntity):
             ):
                 _LOGGER.debug("Setting eco mode SoC to %d", self._eco_mode_soc)
                 try:
-                    await self._inverter.set_operation_mode(
+                    await self._coordinator.inverter.set_operation_mode(
                         operation_mode, self._eco_mode_power, self._eco_mode_soc
                     )
                 except InverterError as err:
@@ -249,24 +259,28 @@ class InverterEMSModeEntity(SelectEntity):
 
     def __init__(
         self,
+        coordinator: GoodweUpdateCoordinator,
         device_info: DeviceInfo,
         description: GoodweSelectEntityDescription,
         inverter: Inverter,
         current_mode: EMSMode,
     ) -> None:
         """Initialize the inverter operation mode setting entity."""
+        self._coordinator = coordinator
         self.entity_description = description
         self._attr_unique_id = f"{DOMAIN}-{description.key}-{inverter.serial_number}"
+        self._attr_suggested_object_id = (
+            f"goodwe_{slugify(str(inverter.serial_number))}_{slugify(description.key)}"
+        )
         self._attr_device_info = device_info
         self._attr_options = list(description.options.keys())
         self._attr_current_option = current_mode.name.lower()
-        self._inverter: Inverter = inverter
 
     async def async_select_option(self, option: str) -> None:
         """Change the EMS mode."""
         _LOGGER.debug("Setting EMS mode to %s", option)
         try:
-            await self._inverter.set_ems_mode(self.entity_description.options[option])
+            await self._coordinator.inverter.set_ems_mode(self.entity_description.options[option])
         except InverterError as err:
             _LOGGER.warning("Failed to set EMS mode to %s: %s", option, err)
             return
@@ -275,5 +289,5 @@ class InverterEMSModeEntity(SelectEntity):
 
     async def async_update(self) -> None:
         """Get the current EMS mode from inverter."""
-        value = await self._inverter.get_ems_mode()
+        value = await self._coordinator.inverter.get_ems_mode()
         self._attr_current_option = value.name.lower()

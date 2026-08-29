@@ -144,7 +144,9 @@
           "network_timeout": "Network request timeout (s)",
           "modbus_id": "Modbus ID",
           "default_area": "Default area/room",
-          "auto_load_control": "Enable load control automatically"
+          "auto_load_control": "Enable load control automatically",
+          "pre_scan_enabled": "Pre-scan the local network before discovery",
+          "network_cidr": "Network to pre-scan (CIDR, e.g. 192.168.2.0/24)"
         }
       }
     }

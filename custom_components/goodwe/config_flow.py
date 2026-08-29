@@ -25,14 +25,18 @@ from .const import (
     CONF_MAC,
     CONF_MODBUS_ID,
     CONF_MODEL_FAMILY,
+    CONF_NETWORK_CIDR,
     CONF_NETWORK_RETRIES,
     CONF_NETWORK_TIMEOUT,
+    CONF_PRE_SCAN_ENABLED,
     DEFAULT_AREA_NAME,
     DEFAULT_AUTO_LOAD_CONTROL,
     DEFAULT_MODBUS_ID,
     DEFAULT_NAME,
+    DEFAULT_NETWORK_CIDR,
     DEFAULT_NETWORK_RETRIES,
     DEFAULT_NETWORK_TIMEOUT,
+    DEFAULT_PRE_SCAN_ENABLED,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -43,6 +47,7 @@ from .discovery import (
     async_scan_goodwe_inverters,
     build_updated_entry_data,
     normalize_mac,
+    resolve_network_cidr,
 )
 
 PROTOCOL_CHOICES = ["UDP", "TCP"]
@@ -70,6 +75,8 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_NETWORK_TIMEOUT): cv.positive_int,
         vol.Optional(CONF_DEFAULT_AREA): str,
         vol.Optional(CONF_AUTO_LOAD_CONTROL): cv.boolean,
+        vol.Optional(CONF_PRE_SCAN_ENABLED): cv.boolean,
+        vol.Optional(CONF_NETWORK_CIDR): str,
     }
 )
 
@@ -112,6 +119,17 @@ class OptionsFlowHandler(OptionsFlow):
             CONF_AUTO_LOAD_CONTROL,
             self.entry.data.get(CONF_AUTO_LOAD_CONTROL, DEFAULT_AUTO_LOAD_CONTROL),
         )
+        pre_scan_enabled = self.entry.options.get(
+            CONF_PRE_SCAN_ENABLED,
+            self.entry.data.get(CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED),
+        )
+        network_cidr = self.entry.options.get(
+            CONF_NETWORK_CIDR,
+            self.entry.data.get(
+                CONF_NETWORK_CIDR,
+                resolve_network_cidr(DEFAULT_NETWORK_CIDR, host) or DEFAULT_NETWORK_CIDR,
+            ),
+        )
 
         return self.async_show_form(
             step_id="init",
@@ -131,6 +149,8 @@ class OptionsFlowHandler(OptionsFlow):
                     CONF_MODBUS_ID: modbus_id,
                     CONF_DEFAULT_AREA: default_area,
                     CONF_AUTO_LOAD_CONTROL: auto_load_control,
+                    CONF_PRE_SCAN_ENABLED: pre_scan_enabled,
+                    CONF_NETWORK_CIDR: network_cidr,
                 },
             ),
         )
@@ -178,6 +198,10 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         )
         data[CONF_DEFAULT_AREA] = DEFAULT_AREA_NAME
         data[CONF_AUTO_LOAD_CONTROL] = DEFAULT_AUTO_LOAD_CONTROL
+        data[CONF_PRE_SCAN_ENABLED] = DEFAULT_PRE_SCAN_ENABLED
+        data[CONF_NETWORK_CIDR] = (
+            resolve_network_cidr(DEFAULT_NETWORK_CIDR, host) or DEFAULT_NETWORK_CIDR
+        )
 
         # If already configured, update host/port/protocol/MAC on discovery and abort.
         self._abort_if_unique_id_configured(updates=data)
@@ -306,6 +330,10 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         )
         data[CONF_DEFAULT_AREA] = DEFAULT_AREA_NAME
         data[CONF_AUTO_LOAD_CONTROL] = DEFAULT_AUTO_LOAD_CONTROL
+        data[CONF_PRE_SCAN_ENABLED] = DEFAULT_PRE_SCAN_ENABLED
+        data[CONF_NETWORK_CIDR] = (
+            resolve_network_cidr(DEFAULT_NETWORK_CIDR, host) or DEFAULT_NETWORK_CIDR
+        )
 
         self._abort_if_unique_id_configured(updates=data)
 

@@ -45,6 +45,7 @@ from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
 from .const import DOMAIN
 from .coordinator import GoodweConfigEntry, GoodweUpdateCoordinator
@@ -53,6 +54,19 @@ _LOGGER = logging.getLogger(__name__)
 
 # Sensor name of battery SoC
 BATTERY_SOC = "battery_soc"
+
+_SENSOR_OBJECT_ID_ALIASES = {
+    "battery_soc": "battery_state_of_charge",
+    "ppv": "pv_power",
+    "pbattery1": "battery_power",
+}
+
+
+def _serial_object_id(serial_number: str, key: str) -> str:
+    """Return a deterministic serial-specific Home Assistant object ID."""
+    serial = slugify(str(serial_number))
+    normalized_key = _SENSOR_OBJECT_ID_ALIASES.get(key, slugify(key))
+    return f"goodwe_{serial}_{normalized_key}"
 
 # Sensors that are reset to 0 at midnight.
 # The inverter is only powered by the solar panels and not mains power, so it goes dead when the sun goes down.
@@ -190,6 +204,16 @@ async def async_setup_entry(
         InverterSensor(coordinator, device_info, inverter, sensor)
         for sensor in inverter.sensors()
     )
+    entities.extend(
+        GoodweMetadataSensor(coordinator, device_info, inverter, key)
+        for key in (
+            "inverter_serial_number",
+            "inverter_ip_address",
+            "inverter_mac_address",
+            "inverter_last_seen",
+            "inverter_nr_phase",
+        )
+    )
     async_add_entities(entities)
 
 
@@ -210,6 +234,9 @@ class InverterSensor(CoordinatorEntity[GoodweUpdateCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._attr_name = sensor.name.strip()
         self._attr_unique_id = f"{DOMAIN}-{sensor.id_}-{inverter.serial_number}"
+        self._attr_suggested_object_id = _serial_object_id(
+            inverter.serial_number, sensor.id_
+        )
         self._attr_device_info = device_info
         self._attr_entity_category = (
             EntityCategory.DIAGNOSTIC if sensor.id_ not in _MAIN_SENSORS else None
@@ -286,3 +313,68 @@ class InverterSensor(CoordinatorEntity[GoodweUpdateCoordinator], SensorEntity):
         if self._sensor.id_ in DAILY_RESET and self._stop_reset is not None:
             self._stop_reset()
         await super().async_will_remove_from_hass()
+
+
+class GoodweMetadataSensor(CoordinatorEntity[GoodweUpdateCoordinator], SensorEntity):
+    """Expose stable inverter/network metadata as Home Assistant sensors."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    _NAMES = {
+        "inverter_serial_number": "Inverter serial number",
+        "inverter_ip_address": "Inverter IP address",
+        "inverter_mac_address": "Inverter MAC address",
+        "inverter_last_seen": "Inverter last seen",
+        "inverter_nr_phase": "Inverter number of phases",
+    }
+    _ICONS = {
+        "inverter_serial_number": "mdi:identifier",
+        "inverter_ip_address": "mdi:ip-network",
+        "inverter_mac_address": "mdi:network-outline",
+        "inverter_last_seen": "mdi:clock-check-outline",
+        "inverter_nr_phase": "mdi:sine-wave",
+    }
+
+    def __init__(
+        self,
+        coordinator: GoodweUpdateCoordinator,
+        device_info: DeviceInfo,
+        inverter: Inverter,
+        key: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._key = key
+        self._attr_name = self._NAMES[key]
+        self._attr_unique_id = f"{DOMAIN}-{key}-{inverter.serial_number}"
+        self._attr_suggested_object_id = _serial_object_id(
+            inverter.serial_number, key
+        )
+        self._attr_device_info = device_info
+        self._attr_icon = self._ICONS[key]
+        if key == "inverter_last_seen":
+            self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        elif key == "inverter_nr_phase":
+            # Phase count is operationally useful, not merely diagnostic.
+            self._attr_entity_category = None
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def native_value(self) -> StateType | datetime:
+        if self._key == "inverter_serial_number":
+            return self.coordinator.serial_number
+        if self._key == "inverter_ip_address":
+            return self.coordinator.current_host or self.coordinator.last_known_host
+        if self._key == "inverter_mac_address":
+            return self.coordinator.current_mac or self.coordinator.last_known_mac
+        if self._key == "inverter_last_seen":
+            return self.coordinator.last_seen
+        if self._key == "inverter_nr_phase":
+            return self.coordinator.phase_count
+        return None
+
+    @property
+    def available(self) -> bool:
+        # Keep last-seen and last-known network values visible while the inverter
+        # is offline; that is exactly when these diagnostics are needed.
+        return self.native_value is not None
