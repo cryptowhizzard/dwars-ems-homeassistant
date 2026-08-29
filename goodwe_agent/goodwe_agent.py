@@ -75,7 +75,7 @@ AGENT_NAME = os.environ.get("ADDON_NAME", "GoodWe Agent")
 AGENT_VERSION = os.environ.get("ADDON_VERSION", "unknown")
 AGENT_TYPE = os.environ.get("AGENT_TYPE", "goodwe")
 
-BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", False)
+BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", True)
 BACKUP_YAML_PATH = os.environ.get("BACKUP_YAML_PATH", "/config/backup.yaml")
 BACKUP_YAML_OVERWRITE = env_bool("BACKUP_YAML_OVERWRITE", False)
 
@@ -88,8 +88,7 @@ HA_REGISTRY_DISCOVERY = env_bool("HA_REGISTRY_DISCOVERY", True)
 PUBLISH_DIAGNOSTIC_ENTITIES = env_bool("PUBLISH_DIAGNOSTIC_ENTITIES", True)
 HA_STORAGE_DIR = Path(os.environ.get("HA_STORAGE_DIR", "/config/.storage"))
 SERIAL_NUMBER_ENV = os.environ.get("GOODWE_SERIAL_NUMBER", "").strip()
-MAIN_FUSE_PROFILE_RAW = os.environ.get("MAIN_FUSE_PROFILE", "auto")
-PHASE_CACHE_PATH = Path(os.environ.get("GOODWE_PHASE_CACHE_PATH", "/data/goodwe_phase_detection.json"))
+MAIN_FUSE_PROFILE_ENV = os.environ.get("MAIN_FUSE_PROFILE", "auto").strip() or "auto"
 
 # Telemetry. "auto" means: select the entity belonging to the detected serial.
 SOC_ENTITY_RAW = os.environ.get("SOC_ENTITY", "auto")
@@ -171,10 +170,8 @@ PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get(
 )
 PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
 
-# Fast fuse protection. When the two numeric values are set to ``auto`` the
-# main-fuse profile is authoritative. The supported profiles are 1x25, 1x35
-# and 3x25_plus. With profile=auto, hardware phase detection selects 1x25 or
-# 3x25_plus.
+# Fast fuse protection.  Thresholds use "auto" by default:
+# one phase -3500/-2000 W; three phase -8000/-5000 W.
 CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
 CHARGE_BLOCK_SENSOR_RAW = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "auto")
 CHARGE_BLOCK_TRIGGER_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "auto")
@@ -187,6 +184,30 @@ CHARGE_BLOCK_FALLBACK_OPTION = os.environ.get(
     "HA_CHARGE_BLOCK_FALLBACK_OPTION", "auto"
 )
 
+MAIN_FUSE_THRESHOLDS = {
+    "3x25_plus": {
+        "phase_count": 3,
+        "charge_block_below_w": -10000.0,
+        "charge_block_release_above_w": -7500.0,
+        "grid_export_limit_w": 5000,
+        "label": "3 x 25 A of hoger",
+    },
+    "1x35": {
+        "phase_count": 1,
+        "charge_block_below_w": -5000.0,
+        "charge_block_release_above_w": -3500.0,
+        "grid_export_limit_w": 3000,
+        "label": "1 x 35 A",
+    },
+    "1x25": {
+        "phase_count": 1,
+        "charge_block_below_w": -3600.0,
+        "charge_block_release_above_w": -2000.0,
+        "grid_export_limit_w": 3000,
+        "label": "1 x 25 A",
+    },
+}
+
 # Standalone inverter with PV on another inverter/meter.
 STANDALONE_ENABLED = env_bool("STANDALONE_ENABLED", False)
 STANDALONE_PV_ENTITY_RAW = os.environ.get("STANDALONE_PV_ENTITY", "")
@@ -196,13 +217,21 @@ STANDALONE_MAX_CHARGE_W = env_int("STANDALONE_MAX_CHARGE_W", 0, 0)
 
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
 
-BACKUP_YAML_CONTENT = """- alias: DWARS scheduled automatic backup
-  description: Create a Home Assistant backup before the independent DWARS update manager runs.
+BACKUP_YAML_CONTENT = """- alias: Auto update everything
+  description: Automatically install updates
   trigger:
     - platform: time
       at: "03:00:00"
+
   action:
     - service: backup.create_automatic
+
+    - delay: "00:02:00"
+
+    - service: update.install
+      target:
+        entity_id: all
+
   mode: single
 """
 
@@ -210,6 +239,48 @@ BACKUP_YAML_CONTENT = """- alias: DWARS scheduled automatic backup
 # ---------------------------------------------------------------------------
 # Generic helpers
 # ---------------------------------------------------------------------------
+
+
+
+def normalize_main_fuse_profile(value: Any) -> str:
+    raw = str(value or "auto").strip().lower()
+    raw = raw.replace("×", "x").replace(" ", "").replace("-", "_")
+    raw = raw.replace("+", "_plus")
+    aliases = {
+        "": "auto",
+        "auto": "auto",
+        "unknown": "auto",
+        "onbekend": "auto",
+        "3x25": "3x25_plus",
+        "3x25_plus": "3x25_plus",
+        "3x35": "3x25_plus",
+        "3x40": "3x25_plus",
+        "3x50": "3x25_plus",
+        "3phase": "3x25_plus",
+        "3fase": "3x25_plus",
+        "3": "3x25_plus",
+        "1x35": "1x35",
+        "35a": "1x35",
+        "1x25": "1x25",
+        "25a": "1x25",
+        "1": "1x25",
+    }
+    return aliases.get(raw, raw if raw in MAIN_FUSE_THRESHOLDS else "auto")
+
+
+def main_fuse_profile_from_action(action: dict[str, Any] | None = None) -> str:
+    if action:
+        settings = inverter_settings_from_action(action)
+        profile = normalize_main_fuse_profile(settings.get("main_fuse_profile"))
+        if profile != "auto":
+            return profile
+    profile = normalize_main_fuse_profile(MAIN_FUSE_PROFILE_ENV)
+    return profile
+
+
+def main_fuse_defaults(profile: str) -> dict[str, Any] | None:
+    normalized = normalize_main_fuse_profile(profile)
+    return MAIN_FUSE_THRESHOLDS.get(normalized)
 
 
 def parse_float(value: Any) -> float | None:
@@ -656,92 +727,18 @@ def _record_text_values(record: dict[str, Any]) -> list[str]:
     return values
 
 
-FUSE_PROFILES: dict[str, dict[str, int]] = {
-    "1x25": {
-        "phase_count": 1,
-        "charge_block_below_w": -3600,
-        "charge_block_release_above_w": -2000,
-        "grid_export_limit_w": 3000,
-    },
-    "1x35": {
-        "phase_count": 1,
-        "charge_block_below_w": -5000,
-        "charge_block_release_above_w": -3500,
-        "grid_export_limit_w": 3000,
-    },
-    "3x25_plus": {
-        "phase_count": 3,
-        "charge_block_below_w": -10000,
-        "charge_block_release_above_w": -7500,
-        "grid_export_limit_w": 5000,
-    },
-}
-
-FUSE_PROFILE_ALIASES = {
-    "auto": "auto",
-    "automatic": "auto",
-    "detect": "auto",
-    "1x25": "1x25",
-    "1_25": "1x25",
-    "1phase25": "1x25",
-    "single25": "1x25",
-    "1x35": "1x35",
-    "1_35": "1x35",
-    "1phase35": "1x35",
-    "single35": "1x35",
-    "3x25": "3x25_plus",
-    "3x25plus": "3x25_plus",
-    "3x25_plus": "3x25_plus",
-    "3phase25": "3x25_plus",
-    "threephase25": "3x25_plus",
-}
-
-# GoodWe product-family evidence.  EUB is the family code present in the
-# production serial supplied for the affected three-phase ET G2 inverter.
-THREE_PHASE_SERIAL_CODES = {"EUB", "ETU", "BTU", "ETC", "EHU"}
-
-
-def normalize_fuse_profile(value: Any) -> str:
-    key = normalize_key(value).replace("_or_higher", "plus").replace("_of_hoger", "plus")
-    compact = re.sub(r"[^a-z0-9]+", "", key)
-    return FUSE_PROFILE_ALIASES.get(key, FUSE_PROFILE_ALIASES.get(compact, "auto"))
-
-
-def serial_family_code(serial: Any) -> str:
-    value = normalize_serial(serial)
-    if not value:
-        return ""
-    # Typical format: 9010KEUB253L0104 -> EUB.
-    match = re.match(r"^\d{4}[A-Z]?([A-Z]{3})", value)
-    return match.group(1) if match else ""
-
-
-def text_phase_hint(values: Iterable[Any]) -> tuple[int, str, int] | None:
-    """Return phase, source label and confidence for model/registry text."""
-    text = " ".join(normalize_key(value) for value in values if value is not None)
-    if not text:
-        return None
-
-    three_patterns = (
-        r"(?:^|_)3(?:_|-)?phase(?:_|$)",
-        r"(?:^|_)three_phase(?:_|$)",
-        r"(?:^|_)3p(?:_|$)",
-        r"(?:^|_)(?:et|bt|et_plus|et_g2|et_lv|eh_plus)(?:_|$)",
-        r"(?:^|_)three_phase_hybrid(?:_|$)",
+def state_is_agent_diagnostic(state: dict[str, Any] | None) -> bool:
+    if not state:
+        return False
+    attrs = state.get("attributes") or {}
+    managed_by = normalize_key(attrs.get("managed_by"))
+    entity_id = normalize_key(state.get("entity_id"))
+    friendly = normalize_key(attrs.get("friendly_name"))
+    return (
+        managed_by == "goodwe_agent"
+        or ("goodwe_agent" in friendly)
+        or re.search(r"goodwe_[a-z0-9]+_inverter_nr_phase$", entity_id) is not None
     )
-    if any(re.search(pattern, text) for pattern in three_patterns):
-        return 3, "model_registry", 90
-
-    # Single-phase model names are useful only as weak evidence. A persisted or
-    # observed three-phase result is never downgraded by this hint.
-    single_patterns = (
-        r"(?:^|_)1(?:_|-)?phase(?:_|$)",
-        r"(?:^|_)single_phase(?:_|$)",
-        r"(?:^|_)(?:es|em|es_uniq|eh_single)(?:_|$)",
-    )
-    if any(re.search(pattern, text) for pattern in single_patterns):
-        return 1, "model_registry", 55
-    return None
 
 
 class EntityMap:
@@ -751,9 +748,7 @@ class EntityMap:
         self.serial = normalize_serial(SERIAL_NUMBER_ENV)
         self.phase_count = 0
         self.phase_source = "unknown"
-        self.phase_confidence = 0
-        self.main_fuse_profile = "auto"
-        self.fuse_profile_source = "auto"
+        self.main_fuse_profile = normalize_main_fuse_profile(MAIN_FUSE_PROFILE_ENV)
         self.ip_address: str | None = None
         self.mac_address: str | None = None
         self.last_seen: str | None = None
@@ -765,8 +760,6 @@ class EntityMap:
         self._target_registry_ids: set[str] = set()
         self._target_device_ids: set[str] = set()
         self._target_config_entry_ids: set[str] = set()
-        self._target_device_rows: list[dict[str, Any]] = []
-        self._target_entry_rows: list[dict[str, Any]] = []
         self.discovery_ready = False
         self.registry_available = False
         self.registry_serial_mismatch = False
@@ -991,8 +984,6 @@ class EntityMap:
             for entry_id, row in goodwe_entries.items()
             if entry_id in self._target_config_entry_ids
         ]
-        self._target_device_rows = target_devices
-        self._target_entry_rows = target_entries
         for row in target_entries:
             for container_key in ("options", "data"):
                 nested = row.get(container_key)
@@ -1022,6 +1013,7 @@ class EntityMap:
             state
             for state in self._inventory
             if str(state.get("entity_id") or "") in self._target_registry_ids
+            and not state_is_agent_diagnostic(state)
         ]
         if target:
             return target
@@ -1194,148 +1186,58 @@ class EntityMap:
             elif key == "last_seen":
                 self.last_seen = value or self.last_seen
 
-    def _phase_cache_read(self) -> dict[str, Any]:
-        try:
-            value = json.loads(PHASE_CACHE_PATH.read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                return {}
-            cached_serial = normalize_serial(value.get("serial"))
-            if self.serial and cached_serial and cached_serial != normalize_serial(self.serial):
-                return {}
-            return value
-        except (OSError, ValueError, TypeError):
-            return {}
-
-    def _phase_cache_write(self) -> None:
-        # Persist only explicit/high-confidence detection. In particular, never
-        # make the one-phase absence fallback sticky.
-        if self.phase_count not in (1, 3) or self.phase_confidence < 80:
-            return
-        try:
-            PHASE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            PHASE_CACHE_PATH.write_text(
-                json.dumps(
-                    {
-                        "serial": self.serial or None,
-                        "phase_count": self.phase_count,
-                        "source": self.phase_source,
-                        "confidence": self.phase_confidence,
-                        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            log_throttled("phase_cache_write", f"WARN: phase cache could not be written: {exc}", 300)
-
-    def _set_phase(self, phase: int, source: str, confidence: int) -> None:
-        if phase not in (1, 3):
-            return
-        # Never let weak one-phase evidence downgrade a strong three-phase result.
-        if self.phase_count == 3 and self.phase_confidence >= 80 and phase == 1 and confidence < 100:
-            return
-        self.phase_count = phase
-        self.phase_source = source
-        self.phase_confidence = confidence
-        self._phase_cache_write()
-
-    def _registry_phase_text(self) -> list[Any]:
-        values: list[Any] = []
-        for row in self._target_device_rows + self._target_entry_rows:
-            values.extend(_record_text_values(row))
-            values.extend(
-                row.get(key)
-                for key in (
-                    "model",
-                    "model_id",
-                    "name",
-                    "name_by_user",
-                    "title",
-                    "unique_id",
-                    "hw_version",
-                    "sw_version",
-                )
-            )
-        for entity_id in self._target_registry_ids or self._goodwe_registry_ids:
-            row = self._registry_by_entity.get(entity_id, {})
-            values.extend(_record_text_values(row))
-            values.append(entity_id)
-        return values
-
-    def _has_l2_l3_inventory(self) -> bool:
-        patterns = (
-            r"(?:^|_)(?:active_power|reactive_power|apparent_power|pgrid|grid_power|meter_power|voltage|current|frequency|power_factor)(?:_total)?_(?:l?[23]|phase_?[23])(?:_|$)",
-            r"(?:^|_)(?:l?[23]|phase_?[23])_(?:active_power|voltage|current|power)(?:_|$)",
-        )
-        # Use registry rows as well as current states. Disabled or temporarily
-        # unavailable L2/L3 entities still prove that the inverter is three-phase.
-        candidates: list[tuple[str, list[tuple[str, int]]]] = []
-        for state in self._goodwe_states():
-            candidates.append((str(state.get("entity_id") or ""), self._candidate_fields(state)))
-        for entity_id in self._target_registry_ids or self._goodwe_registry_ids:
-            row = self._registry_by_entity.get(entity_id, {})
-            fields = [
-                (entity_id, 100),
-                (str(row.get("translation_key") or ""), 100),
-                (str(row.get("unique_id") or ""), 100),
-                (str(row.get("original_name") or ""), 100),
-                (str(row.get("name") or ""), 100),
-            ]
-            candidates.append((entity_id, fields))
-        for _entity_id, fields in candidates:
-            for value, _base in fields:
-                key = normalize_key(value)
-                if any(re.search(pattern, key) for pattern in patterns):
-                    return True
-        return False
-
     def _detect_phase_count(self) -> None:
-        previous_phase = self.phase_count
-        previous_source = self.phase_source
-        previous_confidence = self.phase_confidence
+        # Explicit EMS/BMS hoofdzekeringprofiel is de hoogste prioriteit. Dit is
+        # een administratieve installatiekeuze en moet een onbetrouwbare of oude
+        # phase sensor kunnen overschrijven.
+        fuse_profile = normalize_main_fuse_profile(self.main_fuse_profile or MAIN_FUSE_PROFILE_ENV)
+        defaults = main_fuse_defaults(fuse_profile)
+        if defaults and defaults.get("phase_count") in (1, 3):
+            self.phase_count = int(defaults["phase_count"])
+            self.phase_source = "main_fuse_profile"
+            return
+
+        l2_l3_patterns = (
+            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_(?:l?2|l?3)(?:_|$)",
+            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_phase_?(?:2|3)(?:_|$)",
+            r"(?:^|_)l[23](?:_|$)",
+            r"(?:^|_)phase_?[23](?:_|$)",
+        )
+        l2_l3_found = False
+        for state in self._goodwe_states():
+            if state_is_agent_diagnostic(state):
+                continue
+            # De aanwezigheid van een fysieke L2/L3-entity is voldoende bewijs.
+            # Een actuele waarde van 0 W betekent alleen geen belasting op die
+            # fase; niet dat de omvormer eenfase is.
+            if not _state_available(state):
+                continue
+            for value, _base in self._candidate_fields(state):
+                field = normalize_key(value)
+                if any(re.search(pattern, field) for pattern in l2_l3_patterns):
+                    l2_l3_found = True
+                    break
+            if l2_l3_found:
+                break
+        if l2_l3_found:
+            self.phase_count = 3
+            self.phase_source = "l2_l3_entity_presence"
+            return
 
         phase_state = self._state_by_entity.get(self.entity("phase"))
-        phase = parse_int(phase_state.get("state") if phase_state else None, 0)
-        if phase in (1, 3):
-            self._set_phase(phase, "phase_entity", 100)
-            return
-
-        if self._has_l2_l3_inventory():
-            self._set_phase(3, "l2_l3_registry", 100)
-            return
-
-        family = serial_family_code(self.serial)
-        if family in THREE_PHASE_SERIAL_CODES:
-            self._set_phase(3, f"serial_family_{family.lower()}", 95)
-            return
-
-        hint = text_phase_hint(self._registry_phase_text())
-        if hint is not None:
-            hinted_phase, source, confidence = hint
-            self._set_phase(hinted_phase, source, confidence)
-            if self.phase_count in (1, 3):
+        if phase_state and not state_is_agent_diagnostic(phase_state):
+            phase = parse_int(phase_state.get("state"), 0)
+            if phase in (1, 3):
+                self.phase_count = phase
+                self.phase_source = "phase_entity"
                 return
 
-        cached = self._phase_cache_read()
-        cached_phase = parse_int(cached.get("phase_count"), 0)
-        cached_confidence = parse_int(cached.get("confidence"), 0)
-        if cached_phase in (1, 3) and cached_confidence >= 80:
-            self._set_phase(cached_phase, "persistent_cache", cached_confidence)
-            return
-
-        # Preserve a strong in-memory value across temporary registry outages.
-        if previous_phase in (1, 3) and previous_confidence >= 80:
-            self.phase_count = previous_phase
-            self.phase_source = previous_source
-            self.phase_confidence = previous_confidence
-            return
-
-        # Absence of L2/L3 is not proof of one phase. It is merely the final,
-        # conservative fallback until BMS or stronger hardware evidence arrives.
-        self.phase_count = 1
-        self.phase_source = "fallback_1_phase"
-        self.phase_confidence = 10
+        # Unknown remains unknown until BMS or the HA registry gives usable proof.
+        # phase_charge_thresholds() deliberately uses the conservative 3x25 profile
+        # while unknown, so a three-phase customer is not falsely charge-blocked
+        # immediately after an update.
+        self.phase_count = 0
+        self.phase_source = "unknown"
 
     def _publish_diagnostics(self) -> None:
         if not PUBLISH_DIAGNOSTIC_ENTITIES or not self.serial:
@@ -1346,9 +1248,7 @@ class EntityMap:
             "agent_version": AGENT_VERSION,
             "inverter_serial": self.serial,
             "phase_source": self.phase_source,
-            "phase_confidence": self.phase_confidence,
             "main_fuse_profile": self.main_fuse_profile,
-            "fuse_profile_source": self.fuse_profile_source,
         }
         diagnostics: list[tuple[str, Any, dict[str, Any]]] = [
             (
@@ -1358,13 +1258,8 @@ class EntityMap:
             ),
             (
                 f"{prefix}_inverter_nr_phase",
-                self.phase_count or 1,
+                self.phase_count or 0,
                 {"friendly_name": f"GoodWe {self.serial} inverter phase count", "icon": "mdi:sine-wave"},
-            ),
-            (
-                f"{prefix}_main_fuse_profile",
-                self.main_fuse_profile,
-                {"friendly_name": f"GoodWe {self.serial} main fuse profile", "icon": "mdi:fuse"},
             ),
         ]
         if self.ip_address:
@@ -1607,9 +1502,7 @@ class EntityMap:
             )
             log(
                 f"Entity discovery: serial={self.serial or '?'} phases={self.phase_count} "
-                f"phase_source={self.phase_source} phase_confidence={self.phase_confidence} "
-                f"fuse_profile={self.main_fuse_profile}/{self.fuse_profile_source} "
-                f"ip={self.ip_address or '?'} "
+                f"phase_source={self.phase_source} ip={self.ip_address or '?'} "
                 f"mac={self.mac_address or '?'} "
                 f"registry={'yes' if self.registry_available else 'no'}; {details or 'no entities'}"
             )
@@ -1631,75 +1524,51 @@ def resolved_entities(key: str, raw: str = "") -> list[str]:
 
 
 def phase_count() -> int:
-    return ENTITY_MAP.phase_count if ENTITY_MAP.phase_count in (1, 3) else 1
+    return ENTITY_MAP.phase_count if ENTITY_MAP.phase_count in (1, 3) else 0
 
 
-def _setting_number(settings: dict[str, Any], *keys: str) -> float | None:
-    for key in keys:
-        value = parse_float(settings.get(key))
-        if value is not None:
-            return value
-    return None
-
-
-def resolved_fuse_profile() -> tuple[str, str]:
-    remote = normalize_fuse_profile(
-        REMOTE_INVERTER_SETTINGS.get("main_fuse_profile")
-        or REMOTE_INVERTER_SETTINGS.get("fuse_profile")
-        or nested_get(REMOTE_INVERTER_SETTINGS, ["main_fuse", "profile"])
-    )
-    if remote != "auto":
-        profile, source = remote, "ems_bms"
-    else:
-        local = normalize_fuse_profile(MAIN_FUSE_PROFILE_RAW)
-        if local != "auto":
-            profile, source = local, "local_option"
-        else:
-            profile = "3x25_plus" if phase_count() == 3 else "1x25"
-            source = f"phase_autodetect:{ENTITY_MAP.phase_source}"
-    ENTITY_MAP.main_fuse_profile = profile
-    ENTITY_MAP.fuse_profile_source = source
-    return profile, source
+def active_main_fuse_profile() -> str:
+    profile = normalize_main_fuse_profile(ENTITY_MAP.main_fuse_profile)
+    if profile != "auto":
+        return profile
+    return main_fuse_profile_from_action(last_action if 'last_action' in globals() else None)
 
 
 def phase_charge_thresholds() -> tuple[float, float]:
-    profile, _source = resolved_fuse_profile()
-    defaults = FUSE_PROFILES[profile]
+    trigger = parse_float(CHARGE_BLOCK_TRIGGER_RAW)
+    release = parse_float(CHARGE_BLOCK_RELEASE_RAW)
+    if trigger is not None and release is not None:
+        return trigger, release
 
-    # An explicitly entered local number is the final operator override.
-    local_trigger = parse_float(CHARGE_BLOCK_TRIGGER_RAW)
-    local_release = parse_float(CHARGE_BLOCK_RELEASE_RAW)
-    remote_trigger = _setting_number(
-        REMOTE_INVERTER_SETTINGS,
-        "charge_block_below_w",
-        "ha_charge_block_below_w",
-    )
-    remote_release = _setting_number(
-        REMOTE_INVERTER_SETTINGS,
-        "charge_block_release_above_w",
-        "ha_charge_block_release_above_w",
-    )
-    trigger = local_trigger if local_trigger is not None else (
-        remote_trigger if remote_trigger is not None else float(defaults["charge_block_below_w"])
-    )
-    release = local_release if local_release is not None else (
-        remote_release if remote_release is not None else float(defaults["charge_block_release_above_w"])
-    )
+    profile = active_main_fuse_profile()
+    defaults = main_fuse_defaults(profile)
+    if defaults is None:
+        if phase_count() == 3:
+            defaults = MAIN_FUSE_THRESHOLDS["3x25_plus"]
+        elif phase_count() == 1:
+            defaults = MAIN_FUSE_THRESHOLDS["1x25"]
+        else:
+            # Unknown phase during startup/discovery: avoid false charge-block on
+            # three-phase installations. BMS/main-fuse or L2/L3 detection will
+            # normally replace this within the first decision/discovery cycle.
+            defaults = MAIN_FUSE_THRESHOLDS["3x25_plus"]
+
+    if trigger is None:
+        trigger = float(defaults["charge_block_below_w"])
+    if release is None:
+        release = float(defaults["charge_block_release_above_w"])
     return trigger, release
 
 
-def threshold_source() -> str:
-    if parse_float(CHARGE_BLOCK_TRIGGER_RAW) is not None or parse_float(CHARGE_BLOCK_RELEASE_RAW) is not None:
-        return "local_numeric_override"
-    if _setting_number(REMOTE_INVERTER_SETTINGS, "charge_block_below_w", "ha_charge_block_below_w") is not None or _setting_number(REMOTE_INVERTER_SETTINGS, "charge_block_release_above_w", "ha_charge_block_release_above_w") is not None:
-        return "ems_bms_numeric"
-    _profile, source = resolved_fuse_profile()
-    return source
-
-
 def phase_export_limit() -> int:
-    profile, _source = resolved_fuse_profile()
-    return int(FUSE_PROFILES[profile]["grid_export_limit_w"])
+    explicit = parse_float(GRID_EXPORT_LIMIT_DEFAULT_VALUE)
+    if explicit is not None:
+        return int(round(explicit))
+    profile = active_main_fuse_profile()
+    defaults = main_fuse_defaults(profile)
+    if defaults:
+        return int(defaults["grid_export_limit_w"])
+    return 5000 if phase_count() == 3 else 3000
 
 
 # ---------------------------------------------------------------------------
@@ -1887,17 +1756,14 @@ def set_selects(key: str, raw: str, option: str, label: str) -> bool:
 
 
 def backup_yaml_content_ok(content: str) -> bool:
-    """Return true only for the safe backup-only DWARS automation.
-
-    Legacy versions wrote an ``update.install`` action for ``entity_id: all``.
-    That defeats the protected-update policy and is deliberately not accepted
-    as valid content anymore.
-    """
-    return (
-        "alias: DWARS scheduled automatic backup" in content
-        and "backup.create_automatic" in content
-        and "update.install" not in content
-        and "entity_id: all" not in content
+    return all(
+        marker in content
+        for marker in (
+            "alias: Auto update everything",
+            "backup.create_automatic",
+            "update.install",
+            "entity_id: all",
+        )
     )
 
 
@@ -1922,7 +1788,7 @@ def ensure_backup_yaml() -> dict[str, Any]:
                 content = (
                     BACKUP_YAML_CONTENT
                     if BACKUP_YAML_OVERWRITE
-                    else current.rstrip() + "\n\n# DWARS safe backup automation\n" + BACKUP_YAML_CONTENT
+                    else current.rstrip() + "\n\n# DWARS auto update automation\n" + BACKUP_YAML_CONTENT
                 )
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(content)
@@ -2019,7 +1885,6 @@ charge_block_until_ts = 0.0
 last_server_mode = 7
 last_server_power = 0
 last_action: dict[str, Any] = {}
-REMOTE_INVERTER_SETTINGS: dict[str, Any] = {}
 
 
 def read_entity_number(entity_id: str) -> float | None:
@@ -2309,12 +2174,8 @@ def read_telemetry() -> dict[str, Any]:
             # The integration's persistent network metadata is authoritative.
             "inverter_ip": ENTITY_MAP.ip_address or None,
             "inverter_mac": ENTITY_MAP.mac_address or None,
-            "inverter_phases": phase_count(),
-            "inverter_phase_source": ENTITY_MAP.phase_source,
-            "inverter_phase_confidence": ENTITY_MAP.phase_confidence,
-            "main_fuse_profile": resolved_fuse_profile()[0],
-            "charge_block_below_w": int(round(phase_charge_thresholds()[0])),
-            "charge_block_release_above_w": int(round(phase_charge_thresholds()[1])),
+            "inverter_phases": phase_count() or None,
+            "main_fuse_profile": active_main_fuse_profile(),
             "inverter_last_seen_at": ENTITY_MAP.last_seen or None,
         }
     )
@@ -2348,25 +2209,39 @@ def upload_telemetry(payload: dict[str, Any]) -> None:
 
 
 def apply_remote_phase_setting(settings: dict[str, Any]) -> None:
-    """Store BMS settings and apply a phase hint without unsafe downgrades."""
-    global REMOTE_INVERTER_SETTINGS
-    REMOTE_INVERTER_SETTINGS = dict(settings or {})
-
-    remote_phases = parse_int(settings.get("phase_count"), 0) if settings else 0
-    if remote_phases not in (1, 3):
-        resolved_fuse_profile()
+    """Apply BMS hoofdzekering/phase hints without letting stale HA sensors win."""
+    if not settings:
         return
 
-    # Strong local hardware evidence wins over a conflicting weak BMS value.
-    # A BMS value may always promote an unknown/weak fallback to three phases.
-    if remote_phases == 3:
-        if ENTITY_MAP.phase_count != 3 or ENTITY_MAP.phase_confidence < 80:
-            ENTITY_MAP._set_phase(3, "bms", 80)
-    elif not (ENTITY_MAP.phase_count == 3 and ENTITY_MAP.phase_confidence >= 80):
-        if ENTITY_MAP.phase_source in ("unknown", "fallback_1_phase", "bms"):
-            ENTITY_MAP._set_phase(1, "bms", 80)
+    profile = normalize_main_fuse_profile(settings.get("main_fuse_profile"))
+    if profile != "auto":
+        ENTITY_MAP.main_fuse_profile = profile
+        defaults = main_fuse_defaults(profile)
+        if defaults and defaults.get("phase_count") in (1, 3):
+            # Hoofdzekeringsprofiel is een bewuste onboarding-/klantinstelling en
+            # heeft voorrang op een phase_entity die tijdens de eerste minuten na
+            # een update soms nog 1 rapporteert.
+            ENTITY_MAP.phase_count = int(defaults["phase_count"])
+            ENTITY_MAP.phase_source = "main_fuse_bms"
+        return
 
-    resolved_fuse_profile()
+    remote_phases = parse_int(settings.get("phase_count"), 0)
+    if remote_phases not in (1, 3):
+        return
+
+    source = ENTITY_MAP.phase_source
+    if remote_phases == 3:
+        # BMS 3-fase mag een oude/onjuiste phase_entity=1 overschrijven. Fysieke
+        # L2/L3-detectie blijft inhoudelijk hetzelfde bewijs en wordt niet geschaad.
+        ENTITY_MAP.phase_count = 3
+        ENTITY_MAP.phase_source = "bms"
+        return
+
+    # Remote 1-fase is bruikbaar zolang er geen fysiek L2/L3-bewijs of 3x25-
+    # hoofdzekering bekend is.
+    if source not in ("l2_l3_entity_presence", "main_fuse_bms", "main_fuse_profile"):
+        ENTITY_MAP.phase_count = 1
+        ENTITY_MAP.phase_source = "bms"
 
 
 def perform_decision_cycle() -> None:
@@ -2404,11 +2279,12 @@ def perform_decision_cycle() -> None:
     upload_telemetry(
         {key: value for key, value in heartbeat.items() if value is not None}
     )
+    cb_trigger, cb_release = phase_charge_thresholds()
     log(
         f"Decision mode={last_server_mode} power={last_server_power}W; "
-        f"serial={ENTITY_MAP.serial or '?'} phases={phase_count()}({ENTITY_MAP.phase_source}) "
-        f"fuse={resolved_fuse_profile()[0]} thresholds={phase_charge_thresholds()[0]:g}/{phase_charge_thresholds()[1]:g}W "
-        f"source={threshold_source()} SOC={telemetry.get('soc', '?')} grid={telemetry.get('grid_power_w', '?')}W "
+        f"serial={ENTITY_MAP.serial or '?'} phases={phase_count() or '?'} source={ENTITY_MAP.phase_source} "
+        f"main_fuse={active_main_fuse_profile()} thresholds={cb_trigger:.0f}/{cb_release:.0f}W "
+        f"SOC={telemetry.get('soc', '?')} grid={telemetry.get('grid_power_w', '?')}W "
         f"PV={telemetry.get('pv_power_w', '?')}W battery={telemetry.get('battery_power_w', '?')}W"
     )
 
@@ -2421,7 +2297,7 @@ def perform_decision_cycle() -> None:
 def loop() -> None:
     log(
         f"Agent up version={AGENT_VERSION}; HA={ha_base_url()}; decision={DECISION_INTERVAL}s, "
-        f"safety={SAFETY_INTERVAL}s, standalone={STANDALONE_INTERVAL}s, defaults={DEFAULTS_INTERVAL}s"
+        f"safety={SAFETY_INTERVAL}s, standalone={STANDALONE_INTERVAL}s, defaults={DEFAULTS_INTERVAL}s, main_fuse={normalize_main_fuse_profile(MAIN_FUSE_PROFILE_ENV)}"
     )
     log(
         f"Recommended defaults: DOD=90%, DOD on-grid=90%, DOD holding=off, "
@@ -2442,13 +2318,6 @@ def loop() -> None:
                 ENTITY_MAP.refresh()
                 next_discovery = now + ENTITY_DISCOVERY_INTERVAL
 
-            # Fetch BMS settings before the first 10-second safety check. This
-            # prevents a three-phase site from briefly using one-phase limits
-            # immediately after an add-on upgrade/restart.
-            if now >= next_decision:
-                perform_decision_cycle()
-                next_decision = now + DECISION_INTERVAL
-
             if now >= next_safety:
                 enforce_fast_safety()
                 next_safety = now + SAFETY_INTERVAL
@@ -2465,6 +2334,10 @@ def loop() -> None:
                 apply_managed_defaults(last_action)
                 apply_grid_export_limit(last_action)
                 next_defaults = now + DEFAULTS_INTERVAL
+
+            if now >= next_decision:
+                perform_decision_cycle()
+                next_decision = now + DECISION_INTERVAL
 
         except Exception as exc:
             log(f"ERROR: {exc}")

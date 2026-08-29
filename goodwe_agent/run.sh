@@ -39,6 +39,7 @@ STANDALONE_INTERVAL="$(get_opt standalone_interval 30)"
 DEFAULTS_INTERVAL="$(get_opt defaults_interval 60)"
 ENTITY_DISCOVERY_INTERVAL="$(get_opt entity_discovery_interval 60)"
 POWER_WATT="$(get_opt power_watt 5000)"
+MAIN_FUSE_PROFILE="$(get_opt main_fuse_profile auto)"
 DEBUG="$(get_opt debug 1)"
 
 # HA API/auth. http://supervisor/core becomes .../api in Python.
@@ -82,7 +83,6 @@ BATTERY_POWER_ENTITY="$(get_opt battery_power_entity auto)"
 GOODWE_SERIAL_NUMBER="$(get_opt goodwe_serial_number '')"
 GOODWE_SERIAL_ENTITY="$(get_opt goodwe_serial_entity auto)"
 GOODWE_PHASE_ENTITY="$(get_opt goodwe_phase_entity auto)"
-MAIN_FUSE_PROFILE="$(get_opt main_fuse_profile auto)"
 GOODWE_IP_ENTITY="$(get_opt goodwe_ip_entity auto)"
 GOODWE_MAC_ENTITY="$(get_opt goodwe_mac_entity auto)"
 GOODWE_LAST_SEEN_ENTITY="$(get_opt goodwe_last_seen_entity auto)"
@@ -151,17 +151,17 @@ STANDALONE_GRID_ENTITY="$(get_opt standalone_grid_entity auto)"
 STANDALONE_DEADBAND_W="$(get_opt standalone_deadband_w 150)"
 STANDALONE_MAX_CHARGE_W="$(get_opt standalone_max_charge_w 0)"
 
-BACKUP_YAML_CHECK_ENABLED="$(get_opt backup_yaml_check_enabled false)"
+BACKUP_YAML_CHECK_ENABLED="$(get_opt backup_yaml_check_enabled true)"
 BACKUP_YAML_PATH="$(get_opt backup_yaml_path /config/backup.yaml)"
 BACKUP_YAML_OVERWRITE="$(get_opt backup_yaml_overwrite false)"
 
 export ADDON_VERSION ADDON_NAME AGENT_TYPE
 export API_URL API_KEY TELEMETRY_URL CLIENT_ID
 export INTERVAL="$POLL_INTERVAL" SAFETY_INTERVAL STANDALONE_INTERVAL DEFAULTS_INTERVAL ENTITY_DISCOVERY_INTERVAL
-export POWER="$POWER_WATT" DEBUG
+export POWER="$POWER_WATT" MAIN_FUSE_PROFILE DEBUG
 export HA_URL HA_TOKEN HA_USER_TOKEN HA_AUTH_SOURCE HA_CONTROL_ENABLED HA_AUTO_ENTITY_DISCOVERY HA_REGISTRY_DISCOVERY PUBLISH_DIAGNOSTIC_ENTITIES
 export SOC_ENTITY MODE_ENTITY PV_ENTITY GRID_ENTITY BATTERY_POWER_ENTITY
-export GOODWE_SERIAL_NUMBER GOODWE_SERIAL_ENTITY GOODWE_PHASE_ENTITY GOODWE_IP_ENTITY GOODWE_MAC_ENTITY GOODWE_LAST_SEEN_ENTITY MAIN_FUSE_PROFILE
+export GOODWE_SERIAL_NUMBER GOODWE_SERIAL_ENTITY GOODWE_PHASE_ENTITY GOODWE_IP_ENTITY GOODWE_MAC_ENTITY GOODWE_LAST_SEEN_ENTITY
 export HA_EMS_MODE_SELECT HA_EMS_POWER_NUMBER HA_EMS_POWER_VALUE HA_EMS_SET_POWER_MODES HA_EMS_SET_POWER_BEFORE_MODE
 export HA_EMS_MODE_0_OPTION HA_EMS_MODE_1_OPTION HA_EMS_MODE_3_OPTION HA_EMS_MODE_4_OPTION HA_EMS_MODE_7_OPTION
 export OVERRIDE_DEFAULT_VALUES GOODWE_DEFAULT_DOD GOODWE_DEFAULT_DOD_ON_GRID GOODWE_DEFAULT_DOD_HOLDING GOODWE_DEFAULT_BACKUP_SUPPLY GOODWE_DEFAULT_OPERATION_MODE
@@ -178,7 +178,7 @@ printf '[GoodWe] HA auth=%s registry_discovery=%s publish_diagnostics=%s\n' \
   "$HA_AUTH_SOURCE" "$HA_REGISTRY_DISCOVERY" "$PUBLISH_DIAGNOSTIC_ENTITIES"
 printf '[GoodWe] modes: 1=%s 3=%s 4=%s 7=%s override_defaults=%s\n' \
   "$HA_EMS_MODE_1_OPTION" "$HA_EMS_MODE_3_OPTION" "$HA_EMS_MODE_4_OPTION" "$HA_EMS_MODE_7_OPTION" "$OVERRIDE_DEFAULT_VALUES"
-printf '[GoodWe] phase/fuse defaults: profile=%s thresholds=%s/%s export_limit=%s; standalone=%s external_pv=%s\n' \
+printf '[GoodWe] phase defaults: main_fuse=%s thresholds=%s/%s export_limit=%s; standalone=%s external_pv=%s\n' \
   "$MAIN_FUSE_PROFILE" "$HA_CHARGE_BLOCK_BELOW_W" "$HA_CHARGE_BLOCK_RELEASE_ABOVE_W" "$HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE" \
   "$STANDALONE_ENABLED" "${STANDALONE_PV_ENTITY:-auto}"
 

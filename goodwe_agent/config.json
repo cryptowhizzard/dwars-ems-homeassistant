@@ -1,8 +1,8 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.0",
+  "version": "1.8.2",
   "slug": "goodwe_agent",
-  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met robuuste 1-/3-fasedetectie, hoofdzekeringprofielen, 10s zekeringbewaking, 30s standalone nulregeling en veilige Supervisor-aansturing.",
+  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met hoofdzekeringgestuurde fase-/laadblokkadedetectie, Supervisor-authenticatie, 10s zekeringbewaking, 30s standalone nulregeling en 60s synchronisatie.",
   "startup": "services",
   "boot": "auto",
   "homeassistant_api": true,
@@ -34,7 +34,6 @@
     "goodwe_serial_number": "",
     "goodwe_serial_entity": "auto",
     "goodwe_phase_entity": "auto",
-    "main_fuse_profile": "auto",
     "goodwe_ip_entity": "auto",
     "goodwe_mac_entity": "auto",
     "goodwe_last_seen_entity": "auto",
@@ -86,9 +85,10 @@
     "standalone_grid_entity": "auto",
     "standalone_deadband_w": 150,
     "standalone_max_charge_w": 0,
-    "backup_yaml_check_enabled": false,
+    "backup_yaml_check_enabled": true,
     "backup_yaml_path": "/config/backup.yaml",
-    "backup_yaml_overwrite": false
+    "backup_yaml_overwrite": false,
+    "main_fuse_profile": "auto"
   },
   "schema": {
     "api_url": "str",
@@ -109,7 +109,6 @@
     "goodwe_serial_number": "str?",
     "goodwe_serial_entity": "str",
     "goodwe_phase_entity": "str",
-    "main_fuse_profile": "list(auto|3x25_plus|1x35|1x25)",
     "goodwe_ip_entity": "str",
     "goodwe_mac_entity": "str",
     "goodwe_last_seen_entity": "str",
@@ -163,7 +162,8 @@
     "standalone_max_charge_w": "int",
     "backup_yaml_check_enabled": "bool",
     "backup_yaml_path": "str",
-    "backup_yaml_overwrite": "bool"
+    "backup_yaml_overwrite": "bool",
+    "main_fuse_profile": "list(auto|3x25_plus|1x35|1x25)"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
