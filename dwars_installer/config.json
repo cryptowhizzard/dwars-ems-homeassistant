@@ -1,6 +1,6 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "slug": "dwars_installer",
   "description": "Installeert en update DWARS custom components, inverter agents en voert optioneel volledige Home Assistant/Raspberry updates uit met veilige GoodWe-options recovery.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",

@@ -430,7 +430,11 @@ ensure_addon_installed() {
     log "${label}: geïnstalleerd (${current:-onbekend}, latest=${latest:-onbekend})."
   fi
 
-  update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
+  # GoodWe wordt pas geüpdatet nadat de bestaande options eerst zijn opgeschoond.
+  # Anders kan Supervisor de update blokkeren op een corrupte/nested legacy options-map.
+  if [ "$base_slug" != "goodwe_agent" ]; then
+    update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
+  fi
   printf '%s' "$addon_slug"
 }
 
@@ -441,6 +445,52 @@ set_addon_boot_auto_update() {
     log "${label}: boot=auto en auto_update=true instellen."
     supervisor_curl POST "/addons/${addon_slug}/options" '{"boot":"auto","auto_update":true}' >/dev/null || true
   fi
+}
+
+repair_goodwe_agent_options_before_update() {
+  local addon_slug="$1"
+  local addon_info current_options payload payload_with_compat
+
+  addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || echo '{}')"
+
+  # Sommige eerdere installer/builds hebben per ongeluk een volledige options-map
+  # als waarde van de option "options" opgeslagen. Supervisor valideert dat vóór
+  # een add-on-update en blokkeert dan met: expected str. Got {api_url: ...}.
+  # Deze stap maakt daar weer een platte scalar-only options-map van vóórdat de
+  # GoodWe Agent zelf wordt geüpdatet.
+  current_options="$(printf '%s' "$addon_info" | jq -c '
+    (.data.options // .options // {}) as $root
+    | (if (($root.options? | type) == "object") and (($root.api_url? | type) != "string")
+       then $root.options
+       else $root
+       end)
+    | with_entries(select(
+        (.key != "schema")
+        and ((.value|type) != "object")
+        and ((.value|type) != "array")
+      ))
+  ' 2>/dev/null || echo '{}')"
+
+  if [ -z "$current_options" ] || [ "$current_options" = "null" ]; then
+    current_options='{}'
+  fi
+
+  payload="$(jq -c -n --argjson options "$current_options" '{options:$options}')"
+  payload_with_compat="$(jq -c -n --argjson options "$current_options" '{options:($options + {options:""})}')"
+
+  log "GoodWe Agent: bestaande options pre-repair uitvoeren vóór update."
+  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload_with_compat" >/dev/null 2>&1; then
+    log "GoodWe Agent: options pre-repair OK met legacy options-compatibiliteit."
+    return 0
+  fi
+
+  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null 2>&1; then
+    log "GoodWe Agent: options pre-repair OK met platte options-map."
+    return 0
+  fi
+
+  log "GoodWe Agent: options pre-repair kon niet worden opgeslagen op de huidige versie; update wordt toch geprobeerd."
+  return 1
 }
 
 configure_goodwe_agent() {
@@ -743,6 +793,8 @@ install_or_configure_agents() {
     goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent / BMS' "$source_root" || true)"
     if [ -n "$goodwe_slug" ]; then
       set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent / BMS"
+      repair_goodwe_agent_options_before_update "$goodwe_slug" || true
+      update_addon_if_available "$goodwe_slug" goodwe_agent "GoodWe Agent / BMS" "$source_root" || true
       configure_goodwe_agent "$goodwe_slug"
       start_addon_if_requested "$goodwe_slug" "GoodWe Agent / BMS"
     fi
