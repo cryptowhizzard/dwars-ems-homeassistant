@@ -21,7 +21,7 @@ get_opt() {
   local key="$1"
   local default="${2-}"
   jq -r --arg k "$key" --arg d "$default" '
-    if has($k) then .[$k] else $d end // $d
+    if has($k) and .[$k] != null then .[$k] else $d end
   ' "$CONFIG_PATH"
 }
 
@@ -437,103 +437,54 @@ configure_goodwe_agent() {
   local addon_slug="$1"
   [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
 
-  local options_payload
-  options_payload="$(jq -n \
+  local current_json current_options patch_options merged_options options_payload
+  current_json="$(get_addon_info_json "$addon_slug" || true)"
+  current_options="$(printf '%s' "$current_json" | jq -c '.data.options // .options // {}' 2>/dev/null || echo '{}')"
+
+  patch_options="$(jq -n \
     --arg api_url "$(get_opt goodwe_agent_api_url 'https://api.metdezon.nl/bms/api/next_action.php')" \
     --arg telemetry_url "$(get_opt goodwe_agent_telemetry_url 'https://api.metdezon.nl/bms/api/telemetry.php')" \
     --arg api_key "$(get_opt goodwe_agent_api_key '')" \
     --arg client_id "$(get_opt goodwe_agent_client_id '')" \
+    --arg main_fuse_profile "$(get_opt goodwe_agent_main_fuse_profile auto)" \
     --argjson poll_interval "$(get_opt goodwe_agent_poll_interval 60)" \
     --argjson power_watt "$(get_opt goodwe_agent_power_watt 5000)" \
     --argjson debug "$(get_bool goodwe_agent_debug true)" \
-    --arg ha_url "$(get_opt goodwe_agent_ha_url 'http://supervisor/core')" \
-    --arg ha_token "$(get_opt goodwe_agent_ha_token '')" \
-    --argjson override_defaults "$(get_bool goodwe_agent_override_default_values false)" \
     '{
-      boot: "auto",
-      auto_update: true,
-      options: {
-        api_url: $api_url,
-        telemetry_url: $telemetry_url,
-        api_key: $api_key,
-        client_id: $client_id,
-        poll_interval: $poll_interval,
-        safety_interval: 10,
-        standalone_interval: 30,
-        defaults_interval: 60,
-        entity_discovery_interval: 60,
-        power_watt: $power_watt,
+      api_url: $api_url,
+      telemetry_url: $telemetry_url,
+      poll_interval: $poll_interval,
+      power_watt: $power_watt,
+      debug: (if $debug then 1 else 0 end),
+      ha_url: "http://supervisor/core",
+      ha_auto_entity_discovery: true,
+      ha_registry_discovery: true,
+      ha_control_enabled: true,
+      main_fuse_profile: $main_fuse_profile,
+      ha_ems_mode_select: "auto",
+      ha_ems_power_number: "auto",
+      ha_ems_power_value: "server_power",
+      ha_ems_set_power_modes: "3,4",
+      ha_ems_set_power_before_mode: true,
+      ha_ems_mode_0_option: "auto",
+      ha_ems_mode_1_option: "battery_standby",
+      ha_ems_mode_3_option: "charge_battery",
+      ha_ems_mode_4_option: "discharge_battery",
+      ha_ems_mode_7_option: "auto",
+      ha_grid_export_limit_number: "auto",
+      ha_grid_export_limit_switch: "auto",
+      ha_grid_export_limit_default_value: "auto",
+      ha_grid_export_limit_switch_restore_state: "on"
+    }
+    + (if $api_key != "" then {api_key: $api_key} else {} end)
+    + (if $client_id != "" then {client_id: $client_id} else {} end)')"
 
-        soc_entity: "auto",
-        mode_entity: "",
-        pv_entity: "auto",
-        grid_entity: "auto",
-        battery_power_entity: "auto",
-        goodwe_serial_number: "",
-        goodwe_serial_entity: "auto",
-        goodwe_phase_entity: "auto",
-        goodwe_ip_entity: "auto",
-        goodwe_mac_entity: "auto",
-        goodwe_last_seen_entity: "auto",
-        ha_auto_entity_discovery: true,
+  # Preserve all site-specific agent settings (serial, entities, standalone,
+  # local overrides) and only merge the safe installer-managed fields above.
+  merged_options="$(jq -cn --argjson current "$current_options" --argjson patch "$patch_options" '$current * $patch')"
+  options_payload="$(jq -cn --argjson options "$merged_options" '{boot:"auto",auto_update:true,options:$options}')"
 
-        debug: (if $debug then 1 else 0 end),
-        ha_url: $ha_url,
-        ha_token: $ha_token,
-        ha_control_enabled: true,
-        ha_ems_mode_select: "auto",
-        ha_ems_power_number: "auto",
-        ha_ems_power_value: "server_power",
-        ha_ems_set_power_modes: "3,4",
-        ha_ems_set_power_before_mode: true,
-        ha_ems_mode_0_option: "auto",
-        ha_ems_mode_1_option: "battery_standby",
-        ha_ems_mode_3_option: "charge_battery",
-        ha_ems_mode_4_option: "discharge_battery",
-        ha_ems_mode_7_option: "auto",
-
-        override_default_values: $override_defaults,
-        goodwe_default_dod: 90,
-        goodwe_default_dod_on_grid: 90,
-        goodwe_default_dod_holding: "off",
-        goodwe_default_backup_supply: "on",
-        goodwe_default_operation_mode: "general",
-        ha_dod_holding_switch: "auto",
-        ha_backup_supply_switch: "auto",
-        ha_dod_number: "auto",
-        ha_dod_on_grid_number: "auto",
-        ha_operation_mode_select: "auto",
-
-        ha_charge_block_enabled: true,
-        ha_charge_block_sensor: "auto",
-        ha_charge_block_below_w: "auto",
-        ha_charge_block_release_above_w: "auto",
-        ha_charge_block_duration_sec: 300,
-        ha_charge_block_modes: "3",
-        ha_charge_block_fallback_option: "auto",
-
-        ha_grid_export_limit_number: "auto",
-        ha_grid_export_limit_switch: "auto",
-        ha_grid_export_limit_off_value: "0",
-        ha_grid_export_limit_default_value: "auto",
-        ha_grid_export_limit_switch_curtail_state: "on",
-        ha_grid_export_limit_switch_restore_state: "on",
-        ha_pv_curtail_below_eur_kwh: "",
-        ha_pv_curtail_enabled: true,
-
-        standalone_enabled: false,
-        standalone_pv_entity: "",
-        standalone_grid_entity: "auto",
-        standalone_deadband_w: 150,
-        standalone_max_charge_w: 0,
-
-        backup_yaml_check_enabled: true,
-        backup_yaml_path: "/config/backup.yaml",
-        backup_yaml_overwrite: false
-      }
-    }')"
-
-  log "GoodWe Agent configureren: alleen API-key/HA-token zijn klantgebonden; overige waarden komen automatisch uit BMS en Home Assistant."
+  log "GoodWe Agent configureren zonder bestaande locatie-opties te wissen."
   supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
 }
 
@@ -775,10 +726,19 @@ run_install_cycle() {
   fi
 }
 
+
+start_system_updater() {
+  [ "$(get_bool system_auto_update_enabled true)" = "true" ] || { log "Volautomatische Home Assistant-updates staan uit."; return 0; }
+  log "Volautomatische Home Assistant-updater starten."
+  python3 /app/system_updater.py &
+  SYSTEM_UPDATER_PID=$!
+}
+
 main() {
   [ -f "$CONFIG_PATH" ] || fail "Geen ${CONFIG_PATH} gevonden."
 
   log "Start install/update cycle: inverter_type=$(selected_inverter_type)"
+  start_system_updater
   run_install_cycle
   log "Install/update cycle klaar."
 

@@ -31,7 +31,7 @@ fi
 AGENT_TYPE="solaredge"
 
 BACKUP_YAML_CHECK_ENABLED="$(empty_if_null "$(cfg_optional 'backup_yaml_check_enabled')")"
-[ -n "$BACKUP_YAML_CHECK_ENABLED" ] || BACKUP_YAML_CHECK_ENABLED="true"
+[ -n "$BACKUP_YAML_CHECK_ENABLED" ] || BACKUP_YAML_CHECK_ENABLED="false"
 BACKUP_YAML_PATH="$(empty_if_null "$(cfg_optional 'backup_yaml_path')")"
 [ -n "$BACKUP_YAML_PATH" ] || BACKUP_YAML_PATH="/config/backup.yaml"
 BACKUP_YAML_OVERWRITE="$(empty_if_null "$(cfg_optional 'backup_yaml_overwrite')")"
@@ -47,29 +47,21 @@ backup_yaml_truthy() {
 backup_yaml_content_ok() {
   local path="$1"
   [ -f "$path" ] || return 1
-  grep -q "alias: Auto update everything" "$path" \
+  grep -q "alias: DWARS scheduled automatic backup" "$path" \
     && grep -q "backup.create_automatic" "$path" \
-    && grep -q "update.install" "$path" \
-    && grep -q "entity_id: all" "$path"
+    && ! grep -q "update.install" "$path" \
+    && ! grep -q "entity_id: all" "$path"
 }
 
 write_backup_yaml_content() {
   cat <<'EOF'
-- alias: Auto update everything
-  description: Automatically install updates
+- alias: DWARS scheduled automatic backup
+  description: Create a Home Assistant backup; software updates are managed centrally by DWARS Installer.
   trigger:
     - platform: time
       at: "03:00:00"
-
   action:
     - service: backup.create_automatic
-
-    - delay: "00:02:00"
-
-    - service: update.install
-      target:
-        entity_id: all
-
   mode: single
 EOF
 }
@@ -95,7 +87,7 @@ ensure_backup_yaml() {
 
   if [ -f "$path" ] && ! backup_yaml_truthy "$BACKUP_YAML_OVERWRITE"; then
     {
-      printf '\n\n# DWARS auto update automation\n'
+      printf '\n\n# DWARS safe backup automation\n'
       write_backup_yaml_content
     } >> "$path" 2>/dev/null || { BACKUP_YAML_OK="false"; BACKUP_YAML_UPDATED_AT="$(date +%s)"; return 0; }
   else

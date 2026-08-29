@@ -6,12 +6,11 @@ OPT_FILE=/data/options.json
 get_opt() {
   local key="$1" default="${2-}"
   if [ -f "$OPT_FILE" ]; then
-    local value
-    # jq's `//` treats boolean false as absent. Use has() so unchecked
-    # checkboxes remain false instead of silently reverting to their defaults.
-    value="$(jq -r --arg key "$key" 'if has($key) and .[$key] != null then .[$key] else empty end' "$OPT_FILE" 2>/dev/null || true)"
-    if [ -n "$value" ] && [ "$value" != "null" ]; then
-      printf '%s' "$value"
+    # Do not use jq's `//` operator here: it treats an explicit boolean false
+    # as missing.  That made unchecked add-on options silently fall back to
+    # their defaults (for example ha_control_enabled=false became true).
+    if jq -e --arg key "$key" 'has($key) and .[$key] != null' "$OPT_FILE" >/dev/null 2>&1; then
+      jq -r --arg key "$key" '.[$key]' "$OPT_FILE"
       return 0
     fi
   fi
@@ -43,18 +42,36 @@ POWER_WATT="$(get_opt power_watt 5000)"
 DEBUG="$(get_opt debug 1)"
 
 # HA API/auth. http://supervisor/core becomes .../api in Python.
-#
-# The Supervisor Core proxy requires the injected SUPERVISOR_TOKEN. A manually
-# configured long-lived token is retained only as a fallback (and is preferred
-# when ha_url points directly to Home Assistant instead of the Supervisor proxy).
 RAW_HA_URL="$(get_opt ha_url 'http://supervisor/core')"
-CONFIGURED_HA_TOKEN="$(get_opt ha_token '')"
+RAW_HA_TOKEN="$(get_opt ha_token '')"
 HA_URL="${RAW_HA_URL:-http://supervisor/core}"
-if [ -z "$HA_URL" ] || [ "$HA_URL" = "null" ]; then
-  HA_URL='http://supervisor/core'
-fi
-HA_TOKEN="$CONFIGURED_HA_TOKEN"
-SUPERVISOR_ACCESS_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
+HA_USER_TOKEN="$RAW_HA_TOKEN"
+SUPERVISOR_AUTH_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
+
+# The Supervisor Core proxy explicitly requires the token injected into this
+# add-on.  A token copied from another add-on/container is not valid there and
+# caused the 401 loop in 1.6.x.  A manually configured long-lived token remains
+# available as a fallback for direct Home Assistant URLs.
+case "$HA_URL" in
+  http://supervisor/*|https://supervisor/*)
+    if [ -n "$SUPERVISOR_AUTH_TOKEN" ]; then
+      HA_TOKEN="$SUPERVISOR_AUTH_TOKEN"
+      HA_AUTH_SOURCE=supervisor
+    else
+      HA_TOKEN="$RAW_HA_TOKEN"
+      HA_AUTH_SOURCE=configured-fallback
+    fi
+    ;;
+  *)
+    if [ -n "$RAW_HA_TOKEN" ]; then
+      HA_TOKEN="$RAW_HA_TOKEN"
+      HA_AUTH_SOURCE=configured
+    else
+      HA_TOKEN="$SUPERVISOR_AUTH_TOKEN"
+      HA_AUTH_SOURCE=supervisor-fallback
+    fi
+    ;;
+esac
 
 # Serial-specific auto discovery and telemetry entities
 SOC_ENTITY="$(get_opt soc_entity auto)"
@@ -65,10 +82,13 @@ BATTERY_POWER_ENTITY="$(get_opt battery_power_entity auto)"
 GOODWE_SERIAL_NUMBER="$(get_opt goodwe_serial_number '')"
 GOODWE_SERIAL_ENTITY="$(get_opt goodwe_serial_entity auto)"
 GOODWE_PHASE_ENTITY="$(get_opt goodwe_phase_entity auto)"
+MAIN_FUSE_PROFILE="$(get_opt main_fuse_profile auto)"
 GOODWE_IP_ENTITY="$(get_opt goodwe_ip_entity auto)"
 GOODWE_MAC_ENTITY="$(get_opt goodwe_mac_entity auto)"
 GOODWE_LAST_SEEN_ENTITY="$(get_opt goodwe_last_seen_entity auto)"
 HA_AUTO_ENTITY_DISCOVERY="$(get_opt ha_auto_entity_discovery true)"
+HA_REGISTRY_DISCOVERY="$(get_opt ha_registry_discovery true)"
+PUBLISH_DIAGNOSTIC_ENTITIES="$(get_opt publish_diagnostic_entities true)"
 
 HA_CONTROL_ENABLED="$(get_opt ha_control_enabled true)"
 HA_EMS_MODE_SELECT="$(get_opt ha_ems_mode_select auto)"
@@ -131,7 +151,7 @@ STANDALONE_GRID_ENTITY="$(get_opt standalone_grid_entity auto)"
 STANDALONE_DEADBAND_W="$(get_opt standalone_deadband_w 150)"
 STANDALONE_MAX_CHARGE_W="$(get_opt standalone_max_charge_w 0)"
 
-BACKUP_YAML_CHECK_ENABLED="$(get_opt backup_yaml_check_enabled true)"
+BACKUP_YAML_CHECK_ENABLED="$(get_opt backup_yaml_check_enabled false)"
 BACKUP_YAML_PATH="$(get_opt backup_yaml_path /config/backup.yaml)"
 BACKUP_YAML_OVERWRITE="$(get_opt backup_yaml_overwrite false)"
 
@@ -139,9 +159,9 @@ export ADDON_VERSION ADDON_NAME AGENT_TYPE
 export API_URL API_KEY TELEMETRY_URL CLIENT_ID
 export INTERVAL="$POLL_INTERVAL" SAFETY_INTERVAL STANDALONE_INTERVAL DEFAULTS_INTERVAL ENTITY_DISCOVERY_INTERVAL
 export POWER="$POWER_WATT" DEBUG
-export HA_URL HA_TOKEN CONFIGURED_HA_TOKEN SUPERVISOR_ACCESS_TOKEN HA_CONTROL_ENABLED HA_AUTO_ENTITY_DISCOVERY
+export HA_URL HA_TOKEN HA_USER_TOKEN HA_AUTH_SOURCE HA_CONTROL_ENABLED HA_AUTO_ENTITY_DISCOVERY HA_REGISTRY_DISCOVERY PUBLISH_DIAGNOSTIC_ENTITIES
 export SOC_ENTITY MODE_ENTITY PV_ENTITY GRID_ENTITY BATTERY_POWER_ENTITY
-export GOODWE_SERIAL_NUMBER GOODWE_SERIAL_ENTITY GOODWE_PHASE_ENTITY GOODWE_IP_ENTITY GOODWE_MAC_ENTITY GOODWE_LAST_SEEN_ENTITY
+export GOODWE_SERIAL_NUMBER GOODWE_SERIAL_ENTITY GOODWE_PHASE_ENTITY GOODWE_IP_ENTITY GOODWE_MAC_ENTITY GOODWE_LAST_SEEN_ENTITY MAIN_FUSE_PROFILE
 export HA_EMS_MODE_SELECT HA_EMS_POWER_NUMBER HA_EMS_POWER_VALUE HA_EMS_SET_POWER_MODES HA_EMS_SET_POWER_BEFORE_MODE
 export HA_EMS_MODE_0_OPTION HA_EMS_MODE_1_OPTION HA_EMS_MODE_3_OPTION HA_EMS_MODE_4_OPTION HA_EMS_MODE_7_OPTION
 export OVERRIDE_DEFAULT_VALUES GOODWE_DEFAULT_DOD GOODWE_DEFAULT_DOD_ON_GRID GOODWE_DEFAULT_DOD_HOLDING GOODWE_DEFAULT_BACKUP_SUPPLY GOODWE_DEFAULT_OPERATION_MODE
@@ -154,13 +174,12 @@ export BACKUP_YAML_CHECK_ENABLED BACKUP_YAML_PATH BACKUP_YAML_OVERWRITE
 printf '[GoodWe] version=%s API=%s key_length=%s HA=%s decision=%ss safety=%ss standalone=%ss\n' \
   "$ADDON_VERSION" "$API_URL" "$(printf %s "$API_KEY" | wc -c | tr -d ' ')" "$HA_URL" \
   "$POLL_INTERVAL" "$SAFETY_INTERVAL" "$STANDALONE_INTERVAL"
-printf '[GoodWe] HA auth: supervisor_token=%s configured_token=%s; supervisor proxy prefers SUPERVISOR_TOKEN\n' \
-  "$( [ -n "$SUPERVISOR_ACCESS_TOKEN" ] && printf yes || printf no )" \
-  "$( [ -n "$CONFIGURED_HA_TOKEN" ] && printf yes || printf no )"
+printf '[GoodWe] HA auth=%s registry_discovery=%s publish_diagnostics=%s\n' \
+  "$HA_AUTH_SOURCE" "$HA_REGISTRY_DISCOVERY" "$PUBLISH_DIAGNOSTIC_ENTITIES"
 printf '[GoodWe] modes: 1=%s 3=%s 4=%s 7=%s override_defaults=%s\n' \
   "$HA_EMS_MODE_1_OPTION" "$HA_EMS_MODE_3_OPTION" "$HA_EMS_MODE_4_OPTION" "$HA_EMS_MODE_7_OPTION" "$OVERRIDE_DEFAULT_VALUES"
-printf '[GoodWe] phase defaults: thresholds=%s/%s export_limit=%s; standalone=%s external_pv=%s\n' \
-  "$HA_CHARGE_BLOCK_BELOW_W" "$HA_CHARGE_BLOCK_RELEASE_ABOVE_W" "$HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE" \
+printf '[GoodWe] phase/fuse defaults: profile=%s thresholds=%s/%s export_limit=%s; standalone=%s external_pv=%s\n' \
+  "$MAIN_FUSE_PROFILE" "$HA_CHARGE_BLOCK_BELOW_W" "$HA_CHARGE_BLOCK_RELEASE_ABOVE_W" "$HA_GRID_EXPORT_LIMIT_DEFAULT_VALUE" \
   "$STANDALONE_ENABLED" "${STANDALONE_PV_ENTITY:-auto}"
 
 exec python3 /app/goodwe_agent.py

@@ -23,8 +23,10 @@ import re
 import socket
 import time
 import traceback
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -73,7 +75,7 @@ AGENT_NAME = os.environ.get("ADDON_NAME", "GoodWe Agent")
 AGENT_VERSION = os.environ.get("ADDON_VERSION", "unknown")
 AGENT_TYPE = os.environ.get("AGENT_TYPE", "goodwe")
 
-BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", True)
+BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", False)
 BACKUP_YAML_PATH = os.environ.get("BACKUP_YAML_PATH", "/config/backup.yaml")
 BACKUP_YAML_OVERWRITE = env_bool("BACKUP_YAML_OVERWRITE", False)
 
@@ -82,7 +84,12 @@ HA_URL_ENV = os.environ.get("HA_URL", DEFAULT_HA_URL) or DEFAULT_HA_URL
 DISABLE_HA = env_bool("DISABLE_HA", False)
 HA_CONTROL_ENABLED = env_bool("HA_CONTROL_ENABLED", True)
 AUTO_ENTITY_DISCOVERY = env_bool("HA_AUTO_ENTITY_DISCOVERY", True)
+HA_REGISTRY_DISCOVERY = env_bool("HA_REGISTRY_DISCOVERY", True)
+PUBLISH_DIAGNOSTIC_ENTITIES = env_bool("PUBLISH_DIAGNOSTIC_ENTITIES", True)
+HA_STORAGE_DIR = Path(os.environ.get("HA_STORAGE_DIR", "/config/.storage"))
 SERIAL_NUMBER_ENV = os.environ.get("GOODWE_SERIAL_NUMBER", "").strip()
+MAIN_FUSE_PROFILE_RAW = os.environ.get("MAIN_FUSE_PROFILE", "auto")
+PHASE_CACHE_PATH = Path(os.environ.get("GOODWE_PHASE_CACHE_PATH", "/data/goodwe_phase_detection.json"))
 
 # Telemetry. "auto" means: select the entity belonging to the detected serial.
 SOC_ENTITY_RAW = os.environ.get("SOC_ENTITY", "auto")
@@ -164,8 +171,10 @@ PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get(
 )
 PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
 
-# Fast fuse protection.  Thresholds use "auto" by default:
-# one phase -3500/-2000 W; three phase -8000/-5000 W.
+# Fast fuse protection. When the two numeric values are set to ``auto`` the
+# main-fuse profile is authoritative. The supported profiles are 1x25, 1x35
+# and 3x25_plus. With profile=auto, hardware phase detection selects 1x25 or
+# 3x25_plus.
 CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
 CHARGE_BLOCK_SENSOR_RAW = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "auto")
 CHARGE_BLOCK_TRIGGER_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "auto")
@@ -187,21 +196,13 @@ STANDALONE_MAX_CHARGE_W = env_int("STANDALONE_MAX_CHARGE_W", 0, 0)
 
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
 
-BACKUP_YAML_CONTENT = """- alias: Auto update everything
-  description: Automatically install updates
+BACKUP_YAML_CONTENT = """- alias: DWARS scheduled automatic backup
+  description: Create a Home Assistant backup before the independent DWARS update manager runs.
   trigger:
     - platform: time
       at: "03:00:00"
-
   action:
     - service: backup.create_automatic
-
-    - delay: "00:02:00"
-
-    - service: update.install
-      target:
-        entity_id: all
-
   mode: single
 """
 
@@ -310,67 +311,120 @@ EMS_MODE_OPTIONS = {mode: normalize_ems_option(option) for mode, option in EMS_M
 # ---------------------------------------------------------------------------
 
 
+def _normalize_ha_api_url(url: str) -> str:
+    """Return a Home Assistant REST API base URL without a trailing slash."""
+    raw = str(url or DEFAULT_HA_URL).strip() or DEFAULT_HA_URL
+    parsed = urlsplit(raw)
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/api"):
+        path += "/api"
+    return urlunsplit((parsed.scheme or "http", parsed.netloc, path, "", ""))
+
+
 def ha_base_url() -> str:
-    url = (HA_URL_ENV or DEFAULT_HA_URL).strip().rstrip("/")
-    if not url.endswith("/api"):
-        url += "/api"
-    return url
+    return _normalize_ha_api_url(HA_URL_ENV)
 
 
-def ha_uses_supervisor_proxy() -> bool:
-    parsed = urlsplit(ha_base_url())
-    return (parsed.hostname or "").lower() in {"supervisor", "hassio"}
+def _is_supervisor_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return (parsed.hostname or "").lower() == "supervisor" and parsed.path.startswith("/core")
 
 
-def _first_token(*names: str) -> str:
-    for name in names:
-        value = str(os.environ.get(name) or "").strip()
-        if value:
-            return value
-    return ""
+_HA_ACTIVE_CREDENTIAL: tuple[str, str, str] | None = None
+_HA_LAST_ERROR: str | None = None
+_HA_LAST_STATUS: int | None = None
+_HA_LAST_SUCCESS_TS = 0.0
+_HA_LAST_AUTH_LOG: tuple[str, str] | None = None
+_HA_INVENTORY_OK = False
+_LOG_THROTTLE: dict[str, float] = {}
 
 
-def ha_token_candidates() -> list[tuple[str, str]]:
-    """Return unique bearer tokens in the correct order for the HA URL.
+def log_throttled(key: str, message: str, interval: int = 60) -> None:
+    now = time.monotonic()
+    if now - _LOG_THROTTLE.get(key, -1e12) >= interval:
+        _LOG_THROTTLE[key] = now
+        log(message)
 
-    The internal Supervisor Core proxy explicitly requires SUPERVISOR_TOKEN.
-    A user-supplied long-lived access token remains useful for a direct HA URL
-    and as a fallback when an installation has a non-standard proxy setup.
+
+def _ha_credential_candidates() -> list[tuple[str, str, str]]:
+    """Build ordered (source, token, base URL) candidates.
+
+    The Supervisor Core proxy only accepts the token injected into the running
+    add-on.  A user supplied long-lived token is useful for a direct Core URL,
+    but must never take precedence for http://supervisor/core.
     """
-
-    supervisor = _first_token(
-        "SUPERVISOR_TOKEN", "SUPERVISOR_ACCESS_TOKEN", "HASSIO_TOKEN"
+    configured_base = ha_base_url()
+    supervisor_base = (
+        configured_base
+        if _is_supervisor_url(configured_base)
+        else "http://supervisor/core/api"
     )
-    configured = _first_token(
-        "CONFIGURED_HA_TOKEN", "HA_TOKEN", "HOMEASSISTANT_TOKEN"
+    direct_base = (
+        "http://homeassistant:8123/api"
+        if _is_supervisor_url(configured_base)
+        else configured_base
     )
-    ordered = (
-        [("SUPERVISOR_TOKEN", supervisor), ("configured HA token", configured)]
-        if ha_uses_supervisor_proxy()
-        else [("configured HA token", configured), ("SUPERVISOR_TOKEN", supervisor)]
-    )
-    result: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for source, token in ordered:
-        if token and token not in seen:
-            result.append((source, token))
-            seen.add(token)
-    return result
+
+    supervisor_token = (
+        os.environ.get("SUPERVISOR_TOKEN")
+        or os.environ.get("HASSIO_TOKEN")
+        or ""
+    ).strip()
+    configured_token = (os.environ.get("HA_USER_TOKEN") or "").strip()
+    selected_token = (os.environ.get("HA_TOKEN") or "").strip()
+    long_lived_token = (os.environ.get("HOMEASSISTANT_TOKEN") or "").strip()
+
+    candidates: list[tuple[str, str, str]] = []
+
+    def add(source: str, token: str, base: str) -> None:
+        if not token:
+            return
+        item = (source, token, _normalize_ha_api_url(base))
+        if not any(existing[1:] == item[1:] for existing in candidates):
+            candidates.append(item)
+
+    if _is_supervisor_url(configured_base):
+        add("SUPERVISOR_TOKEN", supervisor_token, configured_base)
+        add("selected HA_TOKEN", selected_token, configured_base)
+        add("configured token via proxy", configured_token, configured_base)
+        add("long-lived token via proxy", long_lived_token, configured_base)
+        # A Home Assistant long-lived token belongs on the direct Core endpoint.
+        add("configured token (direct Core fallback)", configured_token, direct_base)
+        add("HOMEASSISTANT_TOKEN (direct Core fallback)", long_lived_token, direct_base)
+    else:
+        add("configured token", configured_token, configured_base)
+        add("HOMEASSISTANT_TOKEN", long_lived_token, configured_base)
+        add("selected HA_TOKEN", selected_token, configured_base)
+        # An add-on can still recover through the Supervisor proxy when a direct
+        # URL/token combination was configured incorrectly.
+        add("SUPERVISOR_TOKEN (proxy fallback)", supervisor_token, supervisor_base)
+
+    return candidates
 
 
-_HA_SESSION = requests.Session()
-_HA_SELECTED_TOKEN: tuple[str, str] | None = None
-_HA_LAST_AUTH_ERROR = ""
-_HA_LAST_AUTH_SOURCE = ""
-_DEVICE_METADATA_CACHE: dict[str, dict[str, Any]] = {}
+def get_ha_token() -> str | None:
+    """Compatibility helper returning the currently preferred token."""
+    candidates = _ha_credential_candidates()
+    return candidates[0][1] if candidates else None
 
 
-def ha_headers(token: str) -> dict[str, str]:
+def ha_headers(token: str | None = None) -> dict[str, str] | None:
+    selected = token or get_ha_token()
+    if not selected:
+        log_throttled("ha_no_token", "ERROR: no Home Assistant token available")
+        return None
     return {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {selected}",
         "Content-Type": "application/json",
-        "User-Agent": f"DWARS-GoodWe-Agent/{AGENT_VERSION}",
     }
+
+
+def _ordered_ha_credentials() -> list[tuple[str, str, str]]:
+    candidates = _ha_credential_candidates()
+    if _HA_ACTIVE_CREDENTIAL:
+        active = _HA_ACTIVE_CREDENTIAL
+        candidates = [active] + [item for item in candidates if item[1:] != active[1:]]
+    return candidates
 
 
 def ha_request(
@@ -378,74 +432,68 @@ def ha_request(
     path: str,
     *,
     timeout: int = 8,
-    json_payload: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> requests.Response | None:
-    """Call Home Assistant and automatically recover from a stale token.
+    """Call the HA REST API and transparently recover from a stale token.
 
-    Only 401/403 responses are retried with another token. Other HTTP statuses
-    prove authentication worked and are returned to the caller unchanged.
+    A 401/403 is retried with the remaining safe token/endpoint combinations.
+    The first working combination is cached for subsequent calls.
     """
+    global _HA_ACTIVE_CREDENTIAL, _HA_LAST_ERROR, _HA_LAST_STATUS
+    global _HA_LAST_SUCCESS_TS, _HA_LAST_AUTH_LOG
 
-    global _HA_SELECTED_TOKEN, _HA_LAST_AUTH_ERROR, _HA_LAST_AUTH_SOURCE
     if DISABLE_HA:
         return None
-
-    candidates = ha_token_candidates()
-    if not candidates:
-        signature = f"no-token:{ha_base_url()}"
-        if signature != _HA_LAST_AUTH_ERROR:
-            log(
-                "ERROR: no Home Assistant bearer token available; enable "
-                "homeassistant_api or configure a valid long-lived access token"
-            )
-            _HA_LAST_AUTH_ERROR = signature
+    credentials = _ordered_ha_credentials()
+    if not credentials:
+        _HA_LAST_ERROR = "no token available"
+        log_throttled("ha_no_token", "ERROR: no Home Assistant token available")
         return None
 
-    if _HA_SELECTED_TOKEN in candidates:
-        candidates = [_HA_SELECTED_TOKEN] + [
-            candidate for candidate in candidates if candidate != _HA_SELECTED_TOKEN
-        ]
-
-    auth_failures: list[str] = []
+    normalized_path = "/" + str(path or "").lstrip("/")
     last_response: requests.Response | None = None
-    for source, token in candidates:
+    errors: list[str] = []
+
+    for source, token, base in credentials:
+        headers = ha_headers(token)
+        if headers is None:
+            continue
         try:
-            response = _HA_SESSION.request(
-                method,
-                f"{ha_base_url()}/{path.lstrip('/')}",
-                headers=ha_headers(token),
-                json=json_payload,
+            response = requests.request(
+                method.upper(),
+                f"{base}{normalized_path}",
+                headers=headers,
+                json=payload,
                 timeout=timeout,
             )
         except requests.RequestException as exc:
-            if DEBUG:
-                log(f"HA {method.upper()} {path} error via {source}: {exc}")
-            # A second token cannot fix a transport error to the same endpoint.
-            return None
-
-        last_response = response
-        if response.status_code in (401, 403):
-            auth_failures.append(f"{source}={response.status_code}")
-            if _HA_SELECTED_TOKEN == (source, token):
-                _HA_SELECTED_TOKEN = None
+            errors.append(f"{source}@{base}: {exc}")
             continue
 
-        _HA_SELECTED_TOKEN = (source, token)
-        _HA_LAST_AUTH_ERROR = ""
-        if source != _HA_LAST_AUTH_SOURCE:
-            log(f"HA authentication OK via {source}")
-            _HA_LAST_AUTH_SOURCE = source
+        last_response = response
+        _HA_LAST_STATUS = response.status_code
+        if response.status_code in (401, 403):
+            errors.append(f"{source}@{base}: HTTP {response.status_code}")
+            continue
+
+        _HA_ACTIVE_CREDENTIAL = (source, token, base)
+        _HA_LAST_ERROR = None
+        _HA_LAST_SUCCESS_TS = time.time()
+        if _HA_LAST_AUTH_LOG != (source, base):
+            _HA_LAST_AUTH_LOG = (source, base)
+            log(f"HA API authenticated via {source} at {base}")
         return response
 
-    signature = f"{ha_base_url()}|{'|'.join(auth_failures)}"
-    if signature != _HA_LAST_AUTH_ERROR:
-        log(
-            "ERROR: Home Assistant authentication failed at "
-            f"{ha_base_url()} ({', '.join(auth_failures) or 'no response'}). "
-            "For http://supervisor/core leave ha_token empty or ensure the "
-            "injected SUPERVISOR_TOKEN is available."
+    if last_response is not None and last_response.status_code in (401, 403):
+        _HA_LAST_ERROR = "authentication rejected by all configured HA endpoints"
+        log_throttled(
+            "ha_auth_failed",
+            "ERROR: Home Assistant authentication failed for all safe token/endpoint "
+            "combinations; the Supervisor proxy must use the injected SUPERVISOR_TOKEN",
         )
-        _HA_LAST_AUTH_ERROR = signature
+    else:
+        _HA_LAST_ERROR = "; ".join(errors[-3:]) or "Home Assistant API unavailable"
+        log_throttled("ha_unavailable", f"HA API unavailable: {_HA_LAST_ERROR}")
     return last_response
 
 
@@ -459,36 +507,44 @@ def ha_get_state(entity_id: str) -> dict[str, Any] | None:
         except ValueError:
             return None
         return data if isinstance(data, dict) else None
-    if DEBUG and response is not None:
+    if response is not None and DEBUG and response.status_code not in (401, 403, 404):
         log(f"HA GET {entity_id} -> {response.status_code} {response.text[:160]}")
     return None
 
 
-def ha_get_all_states() -> list[dict[str, Any]]:
+def ha_get_all_states() -> list[dict[str, Any]] | None:
+    global _HA_INVENTORY_OK
+    if DISABLE_HA:
+        return None
     response = ha_request("GET", "states", timeout=10)
-    if response is None:
-        return []
-    if response.status_code != 200:
-        if DEBUG:
-            log(f"HA state inventory -> {response.status_code} {response.text[:160]}")
-        return []
+    if response is None or response.status_code != 200:
+        _HA_INVENTORY_OK = False
+        if response is not None and response.status_code not in (401, 403):
+            log_throttled(
+                "ha_inventory_failed",
+                f"HA state inventory failed: HTTP {response.status_code} {response.text[:160]}",
+            )
+        return None
     try:
         data = response.json()
     except ValueError as exc:
-        if DEBUG:
-            log(f"HA state inventory JSON error: {exc}")
-        return []
-    return data if isinstance(data, list) else []
+        _HA_INVENTORY_OK = False
+        log_throttled("ha_inventory_json", f"HA state inventory JSON error: {exc}")
+        return None
+    if not isinstance(data, list):
+        _HA_INVENTORY_OK = False
+        log_throttled("ha_inventory_type", "HA state inventory returned a non-list payload")
+        return None
+    _HA_INVENTORY_OK = True
+    return data
 
 
 def ha_call_service(domain: str, service: str, payload: dict[str, Any]) -> bool:
     response = ha_request(
-        "POST", f"services/{domain}/{service}", timeout=8, json_payload=payload
+        "POST", f"services/{domain}/{service}", timeout=8, payload=payload
     )
-    if response is None:
-        return False
-    ok = 200 <= response.status_code < 300
-    if DEBUG or not ok:
+    ok = response is not None and 200 <= response.status_code < 300
+    if response is not None and (DEBUG or not ok):
         log(
             f"HA SERVICE {domain}.{service} {payload} -> "
             f"{response.status_code} {response.text[:160]}"
@@ -496,66 +552,196 @@ def ha_call_service(domain: str, service: str, payload: dict[str, Any]) -> bool:
     return ok
 
 
+def ha_set_state(entity_id: str, state: Any, attributes: dict[str, Any]) -> bool:
+    response = ha_request(
+        "POST",
+        f"states/{entity_id}",
+        timeout=5,
+        payload={"state": state, "attributes": attributes},
+    )
+    return response is not None and response.status_code in (200, 201)
+
+
 def ha_get_config_version() -> str | None:
     response = ha_request("GET", "config", timeout=5)
-    if response is None or response.status_code != 200:
-        return None
-    try:
-        data = response.json()
-    except ValueError:
-        return None
-    return str(data["version"]) if isinstance(data, dict) and data.get("version") else None
-
-
-def ha_render_template(template: str) -> str | None:
-    response = ha_request(
-        "POST", "template", timeout=8, json_payload={"template": template}
-    )
-    if response is None or response.status_code != 200:
-        return None
-    return response.text.strip()
-
-
-def ha_entity_device_metadata(entity_id: str) -> dict[str, Any]:
-    """Read device-registry metadata for an entity through HA's template API.
-
-    REST state objects do not contain device_id or the GoodWe unique_id. Device
-    metadata is therefore used to match entities to the configured inverter
-    serial when more than one GoodWe inverter exists or entity IDs were renamed.
-    """
-
-    if not entity_id:
-        return {}
-    cached = _DEVICE_METADATA_CACHE.get(entity_id)
-    if cached is not None:
-        return cached
-
-    literal = json.dumps(entity_id)
-    template = (
-        "{% set e = "
-        + literal
-        + " %}{{ {"
-        + "'device_id': device_id(e), "
-        + "'serial_number': device_attr(e, 'serial_number'), "
-        + "'manufacturer': device_attr(e, 'manufacturer'), "
-        + "'model': device_attr(e, 'model'), "
-        + "'name': device_attr(e, 'name'), "
-        + "'connections': (device_attr(e, 'connections') | string), "
-        + "'configuration_url': device_attr(e, 'configuration_url')"
-        + "} | to_json }}"
-    )
-    rendered = ha_render_template(template)
-    metadata: dict[str, Any] = {}
-    if rendered:
+    if response is not None and response.status_code == 200:
         try:
-            parsed = json.loads(rendered)
-            if isinstance(parsed, dict):
-                metadata = parsed
+            data = response.json()
         except ValueError:
-            if DEBUG:
-                log(f"HA device metadata JSON error for {entity_id}: {rendered[:160]}")
-    _DEVICE_METADATA_CACHE[entity_id] = metadata
-    return metadata
+            return None
+        if isinstance(data, dict) and data.get("version"):
+            return str(data["version"])
+    return None
+
+
+def _read_ha_storage(name: str) -> dict[str, Any]:
+    """Read one Home Assistant .storage record without making it mandatory."""
+    if not HA_REGISTRY_DISCOVERY:
+        return {}
+    path = HA_STORAGE_DIR / name
+    for attempt in range(2):
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            data = payload.get("data") if isinstance(payload, dict) else None
+            return data if isinstance(data, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            if attempt == 0:
+                time.sleep(0.05)
+                continue
+            log_throttled(
+                f"storage_{name}",
+                f"HA registry file {path} could not be read: {exc}; using state-only discovery",
+                300,
+            )
+    return {}
+
+
+def _registry_rows(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = data.get(key, [])
+    if isinstance(value, dict):
+        value = list(value.values())
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _state_available(state: dict[str, Any]) -> bool:
+    return str(state.get("state") or "").strip().lower() not in (
+        "",
+        "unknown",
+        "unavailable",
+        "none",
+        "null",
+    )
+
+
+def _normalize_mac(value: Any) -> str | None:
+    raw = re.sub(r"[^0-9A-Fa-f]", "", str(value or ""))
+    if len(raw) != 12:
+        return None
+    return ":".join(raw[index : index + 2] for index in range(0, 12, 2)).upper()
+
+
+def _record_text_values(record: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in (
+        "entity_id",
+        "unique_id",
+        "translation_key",
+        "original_name",
+        "name",
+        "title",
+        "serial_number",
+    ):
+        value = record.get(key)
+        if value is not None:
+            values.append(str(value))
+    for container_key in ("data", "options"):
+        nested = record.get(container_key)
+        if isinstance(nested, dict):
+            for key in (
+                "serial",
+                "serial_number",
+                "inverter_serial",
+                "host",
+                "ip",
+                "ip_address",
+                "mac",
+                "mac_address",
+            ):
+                value = nested.get(key)
+                if value is not None:
+                    values.append(str(value))
+    return values
+
+
+FUSE_PROFILES: dict[str, dict[str, int]] = {
+    "1x25": {
+        "phase_count": 1,
+        "charge_block_below_w": -3600,
+        "charge_block_release_above_w": -2000,
+        "grid_export_limit_w": 3000,
+    },
+    "1x35": {
+        "phase_count": 1,
+        "charge_block_below_w": -5000,
+        "charge_block_release_above_w": -3500,
+        "grid_export_limit_w": 3000,
+    },
+    "3x25_plus": {
+        "phase_count": 3,
+        "charge_block_below_w": -10000,
+        "charge_block_release_above_w": -7500,
+        "grid_export_limit_w": 5000,
+    },
+}
+
+FUSE_PROFILE_ALIASES = {
+    "auto": "auto",
+    "automatic": "auto",
+    "detect": "auto",
+    "1x25": "1x25",
+    "1_25": "1x25",
+    "1phase25": "1x25",
+    "single25": "1x25",
+    "1x35": "1x35",
+    "1_35": "1x35",
+    "1phase35": "1x35",
+    "single35": "1x35",
+    "3x25": "3x25_plus",
+    "3x25plus": "3x25_plus",
+    "3x25_plus": "3x25_plus",
+    "3phase25": "3x25_plus",
+    "threephase25": "3x25_plus",
+}
+
+# GoodWe product-family evidence.  EUB is the family code present in the
+# production serial supplied for the affected three-phase ET G2 inverter.
+THREE_PHASE_SERIAL_CODES = {"EUB", "ETU", "BTU", "ETC", "EHU"}
+
+
+def normalize_fuse_profile(value: Any) -> str:
+    key = normalize_key(value).replace("_or_higher", "plus").replace("_of_hoger", "plus")
+    compact = re.sub(r"[^a-z0-9]+", "", key)
+    return FUSE_PROFILE_ALIASES.get(key, FUSE_PROFILE_ALIASES.get(compact, "auto"))
+
+
+def serial_family_code(serial: Any) -> str:
+    value = normalize_serial(serial)
+    if not value:
+        return ""
+    # Typical format: 9010KEUB253L0104 -> EUB.
+    match = re.match(r"^\d{4}[A-Z]?([A-Z]{3})", value)
+    return match.group(1) if match else ""
+
+
+def text_phase_hint(values: Iterable[Any]) -> tuple[int, str, int] | None:
+    """Return phase, source label and confidence for model/registry text."""
+    text = " ".join(normalize_key(value) for value in values if value is not None)
+    if not text:
+        return None
+
+    three_patterns = (
+        r"(?:^|_)3(?:_|-)?phase(?:_|$)",
+        r"(?:^|_)three_phase(?:_|$)",
+        r"(?:^|_)3p(?:_|$)",
+        r"(?:^|_)(?:et|bt|et_plus|et_g2|et_lv|eh_plus)(?:_|$)",
+        r"(?:^|_)three_phase_hybrid(?:_|$)",
+    )
+    if any(re.search(pattern, text) for pattern in three_patterns):
+        return 3, "model_registry", 90
+
+    # Single-phase model names are useful only as weak evidence. A persisted or
+    # observed three-phase result is never downgraded by this hint.
+    single_patterns = (
+        r"(?:^|_)1(?:_|-)?phase(?:_|$)",
+        r"(?:^|_)single_phase(?:_|$)",
+        r"(?:^|_)(?:es|em|es_uniq|eh_single)(?:_|$)",
+    )
+    if any(re.search(pattern, text) for pattern in single_patterns):
+        return 1, "model_registry", 55
+    return None
 
 
 class EntityMap:
@@ -564,132 +750,356 @@ class EntityMap:
     def __init__(self) -> None:
         self.serial = normalize_serial(SERIAL_NUMBER_ENV)
         self.phase_count = 0
+        self.phase_source = "unknown"
+        self.phase_confidence = 0
+        self.main_fuse_profile = "auto"
+        self.fuse_profile_source = "auto"
         self.ip_address: str | None = None
         self.mac_address: str | None = None
         self.last_seen: str | None = None
         self.entities: dict[str, str] = {}
         self._inventory: list[dict[str, Any]] = []
-        self._has_refreshed = False
-        self._last_discovery_signature = ""
-        self._forced_auto_warning_logged = False
+        self._state_by_entity: dict[str, dict[str, Any]] = {}
+        self._registry_by_entity: dict[str, dict[str, Any]] = {}
+        self._goodwe_registry_ids: set[str] = set()
+        self._target_registry_ids: set[str] = set()
+        self._target_device_ids: set[str] = set()
+        self._target_config_entry_ids: set[str] = set()
+        self._target_device_rows: list[dict[str, Any]] = []
+        self._target_entry_rows: list[dict[str, Any]] = []
+        self.discovery_ready = False
+        self.registry_available = False
+        self.registry_serial_mismatch = False
+        self._last_logged_entities: dict[str, str] = {}
 
     def entity(self, key: str) -> str:
         return self.entities.get(key, "")
 
-    @staticmethod
-    def _entity_domain(entity_id: str) -> str:
-        return entity_id.split(".", 1)[0] if "." in entity_id else ""
+    def state(self, entity_id: str) -> dict[str, Any] | None:
+        return self._state_by_entity.get(entity_id)
 
-    @staticmethod
-    def _entity_object_id(entity_id: str) -> str:
-        return entity_id.split(".", 1)[1] if "." in entity_id else entity_id
+    def _record_mentions_serial(self, record: dict[str, Any], serial: str) -> bool:
+        if not serial:
+            return False
+        for value in _record_text_values(record):
+            normalized = normalize_serial(value)
+            if normalized == serial or (len(serial) >= 8 and serial in normalized):
+                return True
+        identifiers = record.get("identifiers")
+        if isinstance(identifiers, list):
+            for item in identifiers:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    if normalize_key(item[0]) == "goodwe" and normalize_serial(item[1]) == serial:
+                        return True
+        return False
 
-    @staticmethod
-    def _state_available(state: dict[str, Any]) -> bool:
-        return str(state.get("state") or "").lower() not in (
-            "unknown",
-            "unavailable",
-            "none",
-            "null",
-            "",
-        )
+    def _load_registry_context(self) -> None:
+        entity_data = _read_ha_storage("core.entity_registry")
+        device_data = _read_ha_storage("core.device_registry")
+        entry_data = _read_ha_storage("core.config_entries")
+        entity_rows = _registry_rows(entity_data, "entities")
+        device_rows = _registry_rows(device_data, "devices")
+        entry_rows = _registry_rows(entry_data, "entries")
 
-    @staticmethod
-    def _state_search_text(state: dict[str, Any]) -> tuple[str, str, str]:
-        entity_id = str(state.get("entity_id") or "")
-        attrs = state.get("attributes") or {}
-        object_key = normalize_key(EntityMap._entity_object_id(entity_id))
-        friendly = normalize_key(attrs.get("friendly_name", ""))
-        combined = normalize_key(f"{entity_id} {attrs.get('friendly_name', '')}")
-        return object_key, friendly, combined
+        self.registry_available = bool(entity_rows or device_rows or entry_rows)
+        self._registry_by_entity = {}
+        self._goodwe_registry_ids = set()
+        self._target_registry_ids = set()
+        self._target_device_ids = set()
+        self._target_config_entry_ids = set()
+        self.registry_serial_mismatch = False
 
-    @staticmethod
-    def _looks_goodwe(state: dict[str, Any], metadata: dict[str, Any] | None = None) -> bool:
-        _object_key, _friendly, combined = EntityMap._state_search_text(state)
-        if "goodwe" in combined:
-            return True
-        attrs = state.get("attributes") or {}
-        attr_serial = attrs.get("serial_number") or attrs.get("goodwe_serial")
-        if attr_serial:
-            return True
-        metadata = metadata or {}
-        manufacturer = normalize_key(metadata.get("manufacturer"))
-        return "goodwe" in manufacturer
+        goodwe_entries = {
+            str(row.get("entry_id") or row.get("id") or ""): row
+            for row in entry_rows
+            if normalize_key(row.get("domain") or row.get("platform")) == "goodwe"
+            and str(row.get("entry_id") or row.get("id") or "")
+        }
+        serial = normalize_serial(self.serial)
 
-    def _auto_requested(self) -> bool:
-        raw_values = (
-            SOC_ENTITY_RAW,
-            PV_ENTITY_RAW,
-            GRID_ENTITY_RAW,
-            BATTERY_POWER_ENTITY_RAW,
-            PHASE_ENTITY_RAW,
-            SERIAL_ENTITY_RAW,
-            IP_ENTITY_RAW,
-            MAC_ENTITY_RAW,
-            LAST_SEEN_ENTITY_RAW,
-            EMS_MODE_ENTITY_RAW,
-            EMS_POWER_NUMBER_RAW,
-            DOD_HOLDING_SWITCH_RAW,
-            BACKUP_SUPPLY_SWITCH_RAW,
-            DOD_NUMBER_RAW,
-            DOD_ON_GRID_NUMBER_RAW,
-            OPERATION_MODE_SELECT_RAW,
-            GRID_EXPORT_LIMIT_ENTITIES_RAW,
-            GRID_EXPORT_LIMIT_SWITCHES_RAW,
-            CHARGE_BLOCK_SENSOR_RAW,
-            STANDALONE_GRID_ENTITY_RAW,
-        )
-        return any(str(value or "").strip().lower() == "auto" for value in raw_values)
+        if serial:
+            self._target_config_entry_ids.update(
+                entry_id
+                for entry_id, row in goodwe_entries.items()
+                if self._record_mentions_serial(row, serial)
+            )
+
+        goodwe_devices: dict[str, dict[str, Any]] = {}
+        for row in device_rows:
+            device_id = str(row.get("id") or "")
+            if not device_id:
+                continue
+            config_entries = {
+                str(value)
+                for value in (row.get("config_entries") or [])
+                if str(value)
+            }
+            identifiers = row.get("identifiers") or []
+            manufacturer = normalize_key(row.get("manufacturer"))
+            is_goodwe = manufacturer == "goodwe" or bool(config_entries & set(goodwe_entries))
+            if isinstance(identifiers, list):
+                is_goodwe = is_goodwe or any(
+                    isinstance(item, (list, tuple))
+                    and len(item) >= 2
+                    and normalize_key(item[0]) == "goodwe"
+                    for item in identifiers
+                )
+            if not is_goodwe:
+                continue
+            goodwe_devices[device_id] = row
+            if (
+                (serial and self._record_mentions_serial(row, serial))
+                or bool(config_entries & self._target_config_entry_ids)
+            ):
+                self._target_device_ids.add(device_id)
+                self._target_config_entry_ids.update(config_entries & set(goodwe_entries))
+
+        # If Home Assistant exposes explicit GoodWe serial metadata and none of
+        # it matches the configured inverter, do not fall back to arbitrary
+        # generic entity IDs.  Explicit entity options can still be used to
+        # override this safety stop deliberately.
+        if serial and not self._target_device_ids and not self._target_config_entry_ids:
+            known_serials: set[str] = set()
+            for row in goodwe_devices.values():
+                candidate = normalize_serial(row.get("serial_number"))
+                if candidate:
+                    known_serials.add(candidate)
+                for item in row.get("identifiers") or []:
+                    if (
+                        isinstance(item, (list, tuple))
+                        and len(item) >= 2
+                        and normalize_key(item[0]) == "goodwe"
+                    ):
+                        candidate = normalize_serial(item[1])
+                        if candidate:
+                            known_serials.add(candidate)
+            for row in goodwe_entries.values():
+                candidate = normalize_serial(row.get("unique_id"))
+                if candidate:
+                    known_serials.add(candidate)
+            if known_serials and serial not in known_serials:
+                self.registry_serial_mismatch = True
+
+        # The normal installation contains one GoodWe device.  Generic visible
+        # IDs such as number.goodwe_ems_power_limit are safe in that case, but
+        # never ignore an explicit serial mismatch: controlling the wrong
+        # inverter is worse than leaving an entity unresolved.
+        if (
+            not self._target_device_ids
+            and not self.registry_serial_mismatch
+            and len(goodwe_devices) == 1
+        ):
+            device_id, row = next(iter(goodwe_devices.items()))
+            known_serials: set[str] = set()
+            candidate = normalize_serial(row.get("serial_number"))
+            if candidate:
+                known_serials.add(candidate)
+            for item in row.get("identifiers") or []:
+                if (
+                    isinstance(item, (list, tuple))
+                    and len(item) >= 2
+                    and normalize_key(item[0]) == "goodwe"
+                ):
+                    candidate = normalize_serial(item[1])
+                    if candidate:
+                        known_serials.add(candidate)
+            if serial and known_serials and serial not in known_serials:
+                self.registry_serial_mismatch = True
+            else:
+                self._target_device_ids.add(device_id)
+                self._target_config_entry_ids.update(
+                    str(value)
+                    for value in (row.get("config_entries") or [])
+                    if str(value) in goodwe_entries
+                )
+        if (
+            not self._target_config_entry_ids
+            and not self.registry_serial_mismatch
+            and len(goodwe_entries) == 1
+        ):
+            entry_id, row = next(iter(goodwe_entries.items()))
+            entry_serial = normalize_serial(row.get("unique_id"))
+            if serial and entry_serial and serial != entry_serial:
+                self.registry_serial_mismatch = True
+            else:
+                self._target_config_entry_ids.add(entry_id)
+
+        for row in entity_rows:
+            entity_id = str(row.get("entity_id") or "")
+            if not entity_id:
+                continue
+            platform = normalize_key(row.get("platform"))
+            config_entry_id = str(row.get("config_entry_id") or "")
+            device_id = str(row.get("device_id") or "")
+            is_goodwe = platform == "goodwe" or config_entry_id in goodwe_entries
+            if not is_goodwe:
+                continue
+            self._registry_by_entity[entity_id] = row
+            self._goodwe_registry_ids.add(entity_id)
+            if (
+                device_id in self._target_device_ids
+                or config_entry_id in self._target_config_entry_ids
+                or (serial and self._record_mentions_serial(row, serial))
+            ):
+                self._target_registry_ids.add(entity_id)
+
+        if (
+            not self._target_registry_ids
+            and not self.registry_serial_mismatch
+            and (len(goodwe_devices) == 1 or len(goodwe_entries) == 1)
+        ):
+            self._target_registry_ids = set(self._goodwe_registry_ids)
+
+        if self.registry_serial_mismatch:
+            log_throttled(
+                "goodwe_serial_mismatch",
+                f"ERROR: configured GoodWe serial {self.serial} does not match the "
+                "GoodWe device found in Home Assistant; automatic control remains disabled",
+                300,
+            )
+
+        target_devices = [
+            row for device_id, row in goodwe_devices.items() if device_id in self._target_device_ids
+        ]
+        for row in target_devices:
+            if not self.serial:
+                candidate = normalize_serial(row.get("serial_number"))
+                if not candidate:
+                    for item in row.get("identifiers") or []:
+                        if (
+                            isinstance(item, (list, tuple))
+                            and len(item) >= 2
+                            and normalize_key(item[0]) == "goodwe"
+                        ):
+                            candidate = normalize_serial(item[1])
+                            break
+                if candidate:
+                    self.serial = candidate
+            if not self.mac_address:
+                for item in row.get("connections") or []:
+                    if (
+                        isinstance(item, (list, tuple))
+                        and len(item) >= 2
+                        and normalize_key(item[0]) in ("mac", "network_mac")
+                    ):
+                        self.mac_address = _normalize_mac(item[1])
+                        if self.mac_address:
+                            break
+
+        target_entries = [
+            row
+            for entry_id, row in goodwe_entries.items()
+            if entry_id in self._target_config_entry_ids
+        ]
+        self._target_device_rows = target_devices
+        self._target_entry_rows = target_entries
+        for row in target_entries:
+            for container_key in ("options", "data"):
+                nested = row.get(container_key)
+                if not isinstance(nested, dict):
+                    continue
+                if not self.ip_address:
+                    for key in ("host", "ip_address", "ip", "address"):
+                        value = str(nested.get(key) or "").strip()
+                        if value:
+                            self.ip_address = value
+                            break
+                if not self.mac_address:
+                    for key in ("mac", "mac_address"):
+                        value = _normalize_mac(nested.get(key))
+                        if value:
+                            self.mac_address = value
+                            break
+                if not self.serial:
+                    for key in ("serial_number", "serial", "inverter_serial"):
+                        value = normalize_serial(nested.get(key))
+                        if value:
+                            self.serial = value
+                            break
 
     def _goodwe_states(self) -> list[dict[str, Any]]:
-        """Return probable GoodWe states without requiring serial in entity_id.
+        target = [
+            state
+            for state in self._inventory
+            if str(state.get("entity_id") or "") in self._target_registry_ids
+        ]
+        if target:
+            return target
+        if self.registry_serial_mismatch:
+            return []
 
-        HA entity IDs such as number.goodwe_ems_power_limit normally do not carry
-        the inverter serial. The previous hard serial filter removed every valid
-        control entity when goodwe_serial_number was configured.
-        """
-
-        result: list[dict[str, Any]] = []
+        broad: list[dict[str, Any]] = []
+        serial = serial_slug(self.serial)
+        serial_specific: list[dict[str, Any]] = []
         for state in self._inventory:
             entity_id = str(state.get("entity_id") or "")
             if not entity_id:
                 continue
-            object_key, friendly, combined = self._state_search_text(state)
             attrs = state.get("attributes") or {}
-            attr_serial = normalize_serial(
-                attrs.get("serial_number") or attrs.get("goodwe_serial")
+            if normalize_key(attrs.get("managed_by")) == "goodwe_agent":
+                # Agent-owned diagnostic states must not prove that the physical
+                # inverter is online and must never be selected as control entities.
+                continue
+            eid_key = normalize_key(entity_id)
+            friendly = normalize_key(attrs.get("friendly_name", ""))
+            registry_match = entity_id in self._goodwe_registry_ids
+            attr_platform = normalize_key(
+                attrs.get("integration") or attrs.get("platform") or attrs.get("manufacturer")
             )
-            serial = normalize_serial(self.serial)
-            if (
-                "goodwe" in combined
-                or (serial and serial_slug(serial) in combined)
-                or (serial and attr_serial == serial)
-                or object_key.startswith("goodwe_")
-                or friendly.startswith("goodwe_")
+            if not (
+                registry_match
+                or "goodwe" in eid_key
+                or "goodwe" in friendly
+                or attr_platform == "goodwe"
             ):
-                result.append(state)
-        return result
+                continue
+            broad.append(state)
+            attr_serial = serial_slug(
+                attrs.get("serial_number")
+                or attrs.get("goodwe_serial")
+                or attrs.get("inverter_serial")
+            )
+            registry = self._registry_by_entity.get(entity_id, {})
+            registry_serial = self._record_mentions_serial(registry, self.serial)
+            if serial and (
+                serial in eid_key
+                or serial in friendly
+                or attr_serial == serial
+                or registry_serial
+            ):
+                serial_specific.append(state)
 
-    def _candidate_device_score(
-        self, entity_id: str, state: dict[str, Any]
-    ) -> tuple[int, bool]:
-        """Return extra score and whether a known serial mismatches."""
+        # Preserve serial isolation when evidence exists, but do not discard all
+        # generic GoodWe IDs merely because their visible entity_id lacks serial.
+        return serial_specific or broad
 
-        metadata = ha_entity_device_metadata(entity_id)
-        score = 0
-        mismatch = False
-        metadata_serial = normalize_serial(metadata.get("serial_number"))
-        wanted_serial = normalize_serial(self.serial)
-        if wanted_serial and metadata_serial:
-            if metadata_serial == wanted_serial:
-                score += 2500
-            else:
-                mismatch = True
-        if "goodwe" in normalize_key(metadata.get("manufacturer")):
-            score += 300
-        if self._looks_goodwe(state, metadata):
-            score += 150
-        return score, mismatch
+    def _candidate_fields(self, state: dict[str, Any]) -> list[tuple[str, int]]:
+        entity_id = str(state.get("entity_id") or "")
+        attrs = state.get("attributes") or {}
+        registry = self._registry_by_entity.get(entity_id, {})
+        object_id = entity_id.split(".", 1)[1] if "." in entity_id else entity_id
+        return [
+            (object_id, 160),
+            (str(registry.get("translation_key") or ""), 240),
+            (str(registry.get("unique_id") or ""), 190),
+            (str(registry.get("original_name") or ""), 180),
+            (str(registry.get("name") or ""), 170),
+            (str(attrs.get("friendly_name") or ""), 150),
+        ]
+
+    @staticmethod
+    def _alias_score(value: str, alias: str, base: int) -> int:
+        field = normalize_key(value)
+        wanted = normalize_key(alias)
+        if not field or not wanted:
+            return 0
+        if field == wanted:
+            return base + 120
+        if field.endswith("_" + wanted) or field.startswith(wanted + "_"):
+            return base + 100
+        if f"_{wanted}_" in f"_{field}_":
+            return base + 65
+        return 0
 
     def _find_by_suffixes(
         self,
@@ -697,363 +1107,512 @@ class EntityMap:
         suffixes: tuple[str, ...],
         *,
         states: list[dict[str, Any]] | None = None,
+        forbidden: tuple[str, ...] = (),
     ) -> str:
-        candidates = states if states is not None else self._inventory
-        wanted_serial_slug = serial_slug(self.serial)
-        ranked: list[tuple[int, str, dict[str, Any]]] = []
-
+        candidates = states if states is not None else self._goodwe_states()
+        serial = serial_slug(self.serial)
+        ranked: list[tuple[int, str]] = []
         for state in candidates:
             entity_id = str(state.get("entity_id") or "")
-            if not entity_id or self._entity_domain(entity_id) not in domains:
+            if not entity_id or "." not in entity_id:
                 continue
-            object_key, friendly, combined = self._state_search_text(state)
-            best_match_score = 0
+            domain = entity_id.split(".", 1)[0]
+            if domain not in domains:
+                continue
+            candidate_fields = self._candidate_fields(state)
+            candidate_text = normalize_key(
+                " ".join(value for value, _base in candidate_fields if value)
+            )
+            if any(
+                re.search(pattern, candidate_text)
+                for pattern in forbidden
+            ):
+                continue
+            best = 0
             for index, suffix in enumerate(suffixes):
-                suffix_key = normalize_key(suffix)
-                if not suffix_key:
-                    continue
-                specificity = max(0, 100 - index)
-                if object_key == suffix_key:
-                    match_score = 1500 + specificity
-                elif object_key == f"goodwe_{suffix_key}":
-                    match_score = 1450 + specificity
-                elif object_key.endswith(f"_{suffix_key}"):
-                    match_score = 1250 + specificity
-                elif object_key.endswith(suffix_key):
-                    match_score = 1150 + specificity
-                elif friendly == suffix_key or friendly == f"goodwe_{suffix_key}":
-                    match_score = 1050 + specificity
-                elif friendly.endswith(f"_{suffix_key}") or friendly.endswith(suffix_key):
-                    match_score = 900 + specificity
-                elif suffix_key in object_key:
-                    match_score = 650 + specificity
-                elif suffix_key in friendly:
-                    match_score = 500 + specificity
-                else:
-                    continue
-                best_match_score = max(best_match_score, match_score)
-
-            if not best_match_score:
+                priority = max(0, 100 - index * 4)
+                for value, base in candidate_fields:
+                    matched = self._alias_score(value, suffix, base)
+                    if matched:
+                        best = max(best, matched + priority)
+            if not best:
                 continue
-
-            if "goodwe" in combined:
-                best_match_score += 300
-            if wanted_serial_slug and wanted_serial_slug in combined:
-                best_match_score += 900
-            if self._state_available(state):
-                best_match_score += 20
-            if self._entity_domain(entity_id).startswith("input_"):
-                # Prefer the integration's native entity over an optional helper.
-                best_match_score -= 25
-            ranked.append((best_match_score, entity_id, state))
-
+            if entity_id in self._target_registry_ids:
+                best += 500
+            elif entity_id in self._goodwe_registry_ids:
+                best += 160
+            attrs = state.get("attributes") or {}
+            haystack = normalize_key(
+                " ".join(
+                    [
+                        entity_id,
+                        str(attrs.get("friendly_name") or ""),
+                        str(self._registry_by_entity.get(entity_id, {}).get("unique_id") or ""),
+                    ]
+                )
+            )
+            if serial and serial in haystack:
+                best += 100
+            if _state_available(state):
+                best += 10
+            ranked.append((best, entity_id))
         if not ranked:
             return ""
-
-        evaluated: list[tuple[int, str]] = []
-        for score, entity_id, state in ranked:
-            extra, mismatch = self._candidate_device_score(entity_id, state)
-            if mismatch:
-                continue
-            evaluated.append((score + extra, entity_id))
-
-        if not evaluated:
-            return ""
-        evaluated.sort(key=lambda item: (-item[0], item[1]))
-        if DEBUG and len(evaluated) > 1 and evaluated[0][0] == evaluated[1][0]:
-            log(
-                f"WARN: ambiguous HA entity candidates {evaluated[:4]}; "
-                f"selected {evaluated[0][1]}"
-            )
-        return evaluated[0][1]
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        return ranked[0][1]
 
     def _resolve_explicit(
         self,
         raw: str,
         domains: tuple[str, ...],
         suffixes: tuple[str, ...],
+        forbidden: tuple[str, ...] = (),
     ) -> str:
         raw = str(raw or "").strip()
         if raw and raw.lower() != "auto":
             return raw
-        return self._find_by_suffixes(domains, suffixes)
+        return self._find_by_suffixes(domains, suffixes, forbidden=forbidden)
 
-    def _discover_serial_from_device_registry(self) -> None:
-        if self.serial:
+    def _metadata_from_states(self) -> None:
+        for key, attribute in (
+            ("serial", "serial"),
+            ("ip", "ip_address"),
+            ("mac", "mac_address"),
+            ("last_seen", "last_seen"),
+        ):
+            entity_id = self.entity(key)
+            state = self._state_by_entity.get(entity_id)
+            if not state or not _state_available(state):
+                continue
+            value = str(state.get("state") or "").strip()
+            if key == "serial" and value:
+                self.serial = normalize_serial(value)
+            elif key == "ip":
+                self.ip_address = value or self.ip_address
+            elif key == "mac":
+                self.mac_address = _normalize_mac(value) or self.mac_address
+            elif key == "last_seen":
+                self.last_seen = value or self.last_seen
+
+    def _phase_cache_read(self) -> dict[str, Any]:
+        try:
+            value = json.loads(PHASE_CACHE_PATH.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                return {}
+            cached_serial = normalize_serial(value.get("serial"))
+            if self.serial and cached_serial and cached_serial != normalize_serial(self.serial):
+                return {}
+            return value
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _phase_cache_write(self) -> None:
+        # Persist only explicit/high-confidence detection. In particular, never
+        # make the one-phase absence fallback sticky.
+        if self.phase_count not in (1, 3) or self.phase_confidence < 80:
             return
+        try:
+            PHASE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PHASE_CACHE_PATH.write_text(
+                json.dumps(
+                    {
+                        "serial": self.serial or None,
+                        "phase_count": self.phase_count,
+                        "source": self.phase_source,
+                        "confidence": self.phase_confidence,
+                        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            log_throttled("phase_cache_write", f"WARN: phase cache could not be written: {exc}", 300)
+
+    def _set_phase(self, phase: int, source: str, confidence: int) -> None:
+        if phase not in (1, 3):
+            return
+        # Never let weak one-phase evidence downgrade a strong three-phase result.
+        if self.phase_count == 3 and self.phase_confidence >= 80 and phase == 1 and confidence < 100:
+            return
+        self.phase_count = phase
+        self.phase_source = source
+        self.phase_confidence = confidence
+        self._phase_cache_write()
+
+    def _registry_phase_text(self) -> list[Any]:
+        values: list[Any] = []
+        for row in self._target_device_rows + self._target_entry_rows:
+            values.extend(_record_text_values(row))
+            values.extend(
+                row.get(key)
+                for key in (
+                    "model",
+                    "model_id",
+                    "name",
+                    "name_by_user",
+                    "title",
+                    "unique_id",
+                    "hw_version",
+                    "sw_version",
+                )
+            )
+        for entity_id in self._target_registry_ids or self._goodwe_registry_ids:
+            row = self._registry_by_entity.get(entity_id, {})
+            values.extend(_record_text_values(row))
+            values.append(entity_id)
+        return values
+
+    def _has_l2_l3_inventory(self) -> bool:
+        patterns = (
+            r"(?:^|_)(?:active_power|reactive_power|apparent_power|pgrid|grid_power|meter_power|voltage|current|frequency|power_factor)(?:_total)?_(?:l?[23]|phase_?[23])(?:_|$)",
+            r"(?:^|_)(?:l?[23]|phase_?[23])_(?:active_power|voltage|current|power)(?:_|$)",
+        )
+        # Use registry rows as well as current states. Disabled or temporarily
+        # unavailable L2/L3 entities still prove that the inverter is three-phase.
+        candidates: list[tuple[str, list[tuple[str, int]]]] = []
         for state in self._goodwe_states():
-            entity_id = str(state.get("entity_id") or "")
-            metadata = ha_entity_device_metadata(entity_id)
-            serial = normalize_serial(metadata.get("serial_number"))
-            if serial:
-                self.serial = serial
+            candidates.append((str(state.get("entity_id") or ""), self._candidate_fields(state)))
+        for entity_id in self._target_registry_ids or self._goodwe_registry_ids:
+            row = self._registry_by_entity.get(entity_id, {})
+            fields = [
+                (entity_id, 100),
+                (str(row.get("translation_key") or ""), 100),
+                (str(row.get("unique_id") or ""), 100),
+                (str(row.get("original_name") or ""), 100),
+                (str(row.get("name") or ""), 100),
+            ]
+            candidates.append((entity_id, fields))
+        for _entity_id, fields in candidates:
+            for value, _base in fields:
+                key = normalize_key(value)
+                if any(re.search(pattern, key) for pattern in patterns):
+                    return True
+        return False
+
+    def _detect_phase_count(self) -> None:
+        previous_phase = self.phase_count
+        previous_source = self.phase_source
+        previous_confidence = self.phase_confidence
+
+        phase_state = self._state_by_entity.get(self.entity("phase"))
+        phase = parse_int(phase_state.get("state") if phase_state else None, 0)
+        if phase in (1, 3):
+            self._set_phase(phase, "phase_entity", 100)
+            return
+
+        if self._has_l2_l3_inventory():
+            self._set_phase(3, "l2_l3_registry", 100)
+            return
+
+        family = serial_family_code(self.serial)
+        if family in THREE_PHASE_SERIAL_CODES:
+            self._set_phase(3, f"serial_family_{family.lower()}", 95)
+            return
+
+        hint = text_phase_hint(self._registry_phase_text())
+        if hint is not None:
+            hinted_phase, source, confidence = hint
+            self._set_phase(hinted_phase, source, confidence)
+            if self.phase_count in (1, 3):
                 return
 
-    @staticmethod
-    def _extract_mac(value: Any) -> str | None:
-        match = re.search(
-            r"(?i)(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}", str(value or "")
-        )
-        return match.group(0).lower().replace("-", ":") if match else None
+        cached = self._phase_cache_read()
+        cached_phase = parse_int(cached.get("phase_count"), 0)
+        cached_confidence = parse_int(cached.get("confidence"), 0)
+        if cached_phase in (1, 3) and cached_confidence >= 80:
+            self._set_phase(cached_phase, "persistent_cache", cached_confidence)
+            return
 
-    @staticmethod
-    def _extract_ip(value: Any) -> str | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            host = urlsplit(text).hostname if "://" in text else text
-            if host:
-                ipaddress.ip_address(host)
-                return host
-        except ValueError:
-            return None
-        return None
+        # Preserve a strong in-memory value across temporary registry outages.
+        if previous_phase in (1, 3) and previous_confidence >= 80:
+            self.phase_count = previous_phase
+            self.phase_source = previous_source
+            self.phase_confidence = previous_confidence
+            return
+
+        # Absence of L2/L3 is not proof of one phase. It is merely the final,
+        # conservative fallback until BMS or stronger hardware evidence arrives.
+        self.phase_count = 1
+        self.phase_source = "fallback_1_phase"
+        self.phase_confidence = 10
+
+    def _publish_diagnostics(self) -> None:
+        if not PUBLISH_DIAGNOSTIC_ENTITIES or not self.serial:
+            return
+        prefix = f"sensor.goodwe_{serial_slug(self.serial)}"
+        common = {
+            "managed_by": "GoodWe Agent",
+            "agent_version": AGENT_VERSION,
+            "inverter_serial": self.serial,
+            "phase_source": self.phase_source,
+            "phase_confidence": self.phase_confidence,
+            "main_fuse_profile": self.main_fuse_profile,
+            "fuse_profile_source": self.fuse_profile_source,
+        }
+        diagnostics: list[tuple[str, Any, dict[str, Any]]] = [
+            (
+                f"{prefix}_serial_number",
+                self.serial,
+                {"friendly_name": f"GoodWe {self.serial} serial number", "icon": "mdi:identifier"},
+            ),
+            (
+                f"{prefix}_inverter_nr_phase",
+                self.phase_count or 1,
+                {"friendly_name": f"GoodWe {self.serial} inverter phase count", "icon": "mdi:sine-wave"},
+            ),
+            (
+                f"{prefix}_main_fuse_profile",
+                self.main_fuse_profile,
+                {"friendly_name": f"GoodWe {self.serial} main fuse profile", "icon": "mdi:fuse"},
+            ),
+        ]
+        if self.ip_address:
+            diagnostics.append(
+                (
+                    f"{prefix}_ip_address",
+                    self.ip_address,
+                    {"friendly_name": f"GoodWe {self.serial} IP address", "icon": "mdi:ip-network"},
+                )
+            )
+        if self.mac_address:
+            diagnostics.append(
+                (
+                    f"{prefix}_mac_address",
+                    self.mac_address,
+                    {"friendly_name": f"GoodWe {self.serial} MAC address", "icon": "mdi:network-outline"},
+                )
+            )
+        if self.last_seen:
+            diagnostics.append(
+                (
+                    f"{prefix}_last_seen",
+                    self.last_seen,
+                    {
+                        "friendly_name": f"GoodWe {self.serial} last seen",
+                        "device_class": "timestamp",
+                        "icon": "mdi:clock-check-outline",
+                    },
+                )
+            )
+        for entity_id, value, attributes in diagnostics:
+            ha_set_state(entity_id, value, {**common, **attributes})
+
+    def _entity_debug_description(self, entity_id: str) -> str:
+        state = self._state_by_entity.get(entity_id) or {}
+        attrs = state.get("attributes") or {}
+        domain = entity_id.split(".", 1)[0] if "." in entity_id else "?"
+        extra = ""
+        if domain in ("number", "input_number"):
+            mode = attrs.get("mode") or "number"
+            extra = (
+                f" mode={mode} min={attrs.get('min', '?')} max={attrs.get('max', '?')}"
+                f" step={attrs.get('step', '?')}"
+            )
+        return f"{entity_id} ({domain}{extra})"
 
     def refresh(self) -> None:
-        auto_required = self._auto_requested()
-        # Even with periodic discovery disabled, perform one initial inventory
-        # pass so explicitly configured entities and diagnostics are populated.
-        if not AUTO_ENTITY_DISCOVERY and not auto_required and self._has_refreshed:
+        if not AUTO_ENTITY_DISCOVERY and self.entities:
             return
-        if not AUTO_ENTITY_DISCOVERY and auto_required and not self._forced_auto_warning_logged:
-            log(
-                "WARN: ha_auto_entity_discovery is off while one or more entity "
-                "options are 'auto'; discovery remains enabled for those fields"
-            )
-            self._forced_auto_warning_logged = True
-
         inventory = ha_get_all_states()
-        if not inventory:
+        if inventory is None:
+            self.discovery_ready = False
             return
         self._inventory = inventory
-        self._has_refreshed = True
-        _DEVICE_METADATA_CACHE.clear()
+        self._state_by_entity = {
+            str(state.get("entity_id")): state
+            for state in inventory
+            if isinstance(state, dict) and state.get("entity_id")
+        }
+        self._load_registry_context()
 
-        # Serial sensor first; device-registry serial is the fallback.
+        # Serial metadata is normally obtained from the device/config registry.
+        # Keep a state-based fallback for installations where /config/.storage is
+        # unavailable or registry discovery was disabled.
         if not self.serial:
             serial_entity = self._find_by_suffixes(
                 ("sensor",),
-                ("inverter_serial_number", "serial_number", "inverter_serial"),
-                states=inventory,
+                ("inverter_serial_number", "serial_number", "goodwe_serial"),
+                states=[
+                    state
+                    for state in inventory
+                    if "goodwe" in normalize_key(state.get("entity_id", ""))
+                    or "goodwe" in normalize_key((state.get("attributes") or {}).get("friendly_name", ""))
+                ],
             )
-            if serial_entity:
-                serial_state = next(
-                    (s for s in inventory if s.get("entity_id") == serial_entity), None
-                )
-                if serial_state and self._state_available(serial_state):
-                    self.serial = normalize_serial(serial_state.get("state"))
-            self._discover_serial_from_device_registry()
+            serial_state = self._state_by_entity.get(serial_entity)
+            if serial_state and _state_available(serial_state):
+                self.serial = normalize_serial(serial_state.get("state"))
 
         mapping = {
             "soc": (
                 SOC_ENTITY_RAW,
                 ("sensor",),
-                ("battery_state_of_charge", "battery_soc", "state_of_charge"),
+                ("battery_state_of_charge", "battery_soc", "battery_soc_1", "soc"),
+                (),
             ),
             "mode": (
                 MODE_ENTITY_RAW,
-                ("sensor", "select", "input_select"),
+                ("sensor", "select"),
                 ("battery_mode", "ems_mode"),
+                (),
             ),
             "pv": (
                 PV_ENTITY_RAW,
                 ("sensor",),
-                ("pv_power", "ppv", "pv_power_total", "total_pv_power"),
+                ("pv_power", "total_pv_power", "pv_power_total", "ppv"),
+                (),
             ),
             "grid": (
                 GRID_ENTITY_RAW,
                 ("sensor",),
                 (
                     "active_power_total",
-                    "meter_active_power",
+                    "meter_active_power_total",
+                    "grid_active_power",
                     "grid_power",
                     "active_power",
                     "pgrid",
+                ),
+                (
+                    r"(?:active_power|pgrid|grid_power|meter_power)_(?:l?[123]|phase_?[123])(?:_|$)",
                 ),
             ),
             "battery_power": (
                 BATTERY_POWER_ENTITY_RAW,
                 ("sensor",),
-                ("battery_power", "pbattery1", "pbattery"),
+                ("battery_power", "battery_power_1", "pbattery1", "pbattery"),
+                (),
             ),
             "phase": (
                 PHASE_ENTITY_RAW,
                 ("sensor",),
                 ("inverter_nr_phase", "inverter_phase_count", "phase_count"),
+                (),
             ),
             "serial": (
                 SERIAL_ENTITY_RAW,
                 ("sensor",),
-                ("inverter_serial_number", "serial_number", "inverter_serial"),
+                ("inverter_serial_number", "serial_number", "goodwe_serial"),
+                (),
             ),
             "ip": (
                 IP_ENTITY_RAW,
                 ("sensor",),
-                ("inverter_ip_address", "ip_address", "inverter_ip"),
+                ("inverter_ip_address", "goodwe_ip_address", "ip_address"),
+                (),
             ),
             "mac": (
                 MAC_ENTITY_RAW,
                 ("sensor",),
-                ("inverter_mac_address", "mac_address", "inverter_mac"),
+                ("inverter_mac_address", "goodwe_mac_address", "mac_address"),
+                (),
             ),
             "last_seen": (
                 LAST_SEEN_ENTITY_RAW,
                 ("sensor",),
-                ("inverter_last_seen", "last_seen_on", "last_seen"),
+                ("inverter_last_seen", "goodwe_last_seen", "last_seen"),
+                (),
             ),
             "ems_mode": (
                 EMS_MODE_ENTITY_RAW,
-                ("select", "input_select"),
-                ("ems_mode", "inverter_ems_mode"),
+                ("select",),
+                ("ems_mode", "goodwe_ems_mode"),
+                (),
             ),
-            # HA NumberEntity mode=slider and mode=box are the same domain/API.
             "ems_power": (
                 EMS_POWER_NUMBER_RAW,
-                ("number", "input_number"),
-                ("ems_power_limit", "inverter_ems_power_limit", "eco_mode_power"),
+                ("number",),
+                ("ems_power_limit", "goodwe_ems_power_limit"),
+                (),
             ),
             "dod_holding": (
                 DOD_HOLDING_SWITCH_RAW,
-                ("switch", "input_boolean"),
+                ("switch",),
                 ("dod_holding_switch", "dod_holding"),
+                (),
             ),
             "backup_supply": (
                 BACKUP_SUPPLY_SWITCH_RAW,
-                ("switch", "input_boolean"),
-                ("backup_supply_switch", "backup_supply", "backup_output"),
+                ("switch",),
+                ("backup_supply_switch", "backup_supply"),
+                (),
             ),
             "dod": (
                 DOD_NUMBER_RAW,
-                ("number", "input_number"),
+                ("number",),
                 (
                     "battery_discharge_depth_offline",
                     "depth_of_discharge_backup",
-                    "depth_of_discharge_off_grid",
                     "depth_of_discharge_offline",
+                    "backup_depth_of_discharge",
+                    "backup_dod",
                 ),
+                (),
             ),
             "dod_on_grid": (
                 DOD_ON_GRID_NUMBER_RAW,
-                ("number", "input_number"),
+                ("number",),
                 (
                     "battery_discharge_depth",
                     "depth_of_discharge_on_grid",
                     "on_grid_depth_of_discharge",
-                    "ongrid_battery_dod",
+                    "ongrid_depth_of_discharge",
+                    "on_grid_dod",
                 ),
+                (r"(?:offline|backup)",),
             ),
             "operation_mode": (
                 OPERATION_MODE_SELECT_RAW,
-                ("select", "input_select"),
+                ("select",),
                 ("operation_mode", "inverter_operation_mode"),
+                (),
             ),
             "grid_export_limit": (
                 GRID_EXPORT_LIMIT_ENTITIES_RAW,
-                ("number", "input_number"),
-                ("grid_export_limit", "net_exportlimiet", "export_limit"),
+                ("number",),
+                ("grid_export_limit", "net_exportlimiet"),
+                (),
             ),
             "grid_export_switch": (
                 GRID_EXPORT_LIMIT_SWITCHES_RAW,
-                ("switch", "input_boolean"),
-                ("grid_export_limit_switch", "export_limit_switch"),
+                ("switch",),
+                ("grid_export_limit_switch", "grid_export_switch"),
+                (),
             ),
         }
-
         new_entities: dict[str, str] = {}
-        for key, (raw, domains, suffixes) in mapping.items():
-            resolved = self._resolve_explicit(raw, domains, suffixes)
+        for key, (raw, domains, suffixes, forbidden) in mapping.items():
+            resolved = self._resolve_explicit(raw, domains, suffixes, forbidden)
             if resolved:
                 new_entities[key] = resolved
         self.entities = new_entities
 
-        # Metadata entity states, when a custom GoodWe integration exposes them.
-        for key in ("serial", "ip", "mac", "last_seen"):
-            entity_id = self.entity(key)
-            state = next((s for s in inventory if s.get("entity_id") == entity_id), None)
-            if not state or not self._state_available(state):
-                continue
-            value = str(state.get("state") or "").strip()
-            if key == "serial" and value:
-                self.serial = normalize_serial(value)
-            elif key == "ip":
-                self.ip_address = self._extract_ip(value) or self.ip_address
-            elif key == "mac":
-                self.mac_address = self._extract_mac(value) or self.mac_address
-            elif key == "last_seen":
-                self.last_seen = value or self.last_seen
+        self._metadata_from_states()
+        self._detect_phase_count()
 
-        # Standard GoodWe integration stores serial and MAC on the device, not in
-        # state attributes. Read those through the template API from any resolved
-        # native entity.
-        for entity_id in self.entities.values():
-            if not entity_id or "," in entity_id or " " in entity_id:
-                continue
-            metadata = ha_entity_device_metadata(entity_id)
-            metadata_serial = normalize_serial(metadata.get("serial_number"))
-            if metadata_serial and not self.serial:
-                self.serial = metadata_serial
-            if not self.mac_address:
-                self.mac_address = self._extract_mac(metadata.get("connections"))
-            if not self.ip_address:
-                self.ip_address = self._extract_ip(metadata.get("configuration_url"))
-            if self.serial and self.mac_address and self.ip_address:
-                break
+        # A successful, available state from the selected GoodWe device is the
+        # last-seen signal.  Preserve the previous value while the inverter is offline.
+        if any(_state_available(state) for state in self._goodwe_states()):
+            self.last_seen = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        phase_state = ha_get_state(self.entity("phase")) if self.entity("phase") else None
-        phase = parse_int(phase_state.get("state") if phase_state else None, 0)
-        if phase in (1, 3):
-            self.phase_count = phase
-        else:
-            # Active Power L2/L3 (or equivalent pgrid/grid-power names) proves a
-            # three-phase inverter. Slider/box attributes are irrelevant here.
-            has_l2_l3 = False
-            for state in self._goodwe_states():
-                object_key, friendly, _combined = self._state_search_text(state)
-                key = f"{object_key} {friendly}"
-                if re.search(
-                    r"(?:active_power|meter_active_power|grid_power|pgrid)(?:_l)?[23](?:$|_)",
-                    key,
-                ) and self._state_available(state):
-                    has_l2_l3 = True
-                    break
-            self.phase_count = 3 if has_l2_l3 else 1
+        self.discovery_ready = True
+        self._publish_diagnostics()
 
-        # Last state update is a useful fallback when no dedicated last-seen
-        # sensor exists. It remains available after an inverter goes offline.
-        timestamps = [
-            str(state.get("last_updated") or state.get("last_changed") or "")
-            for state in self._goodwe_states()
-            if state.get("last_updated") or state.get("last_changed")
-        ]
-        if timestamps and not self.last_seen:
-            self.last_seen = max(timestamps)
-
-        presentation: dict[str, str] = {}
-        for key in ("ems_power", "dod", "dod_on_grid", "grid_export_limit"):
-            entity_id = self.entity(key)
-            state = next((s for s in inventory if s.get("entity_id") == entity_id), None)
-            attrs = state.get("attributes") if state else {}
-            if entity_id:
-                presentation[key] = str((attrs or {}).get("mode") or "number")
-
-        signature = repr(
-            (
-                self.serial,
-                self.phase_count,
-                self.ip_address,
-                self.mac_address,
-                sorted(self.entities.items()),
-                sorted(presentation.items()),
+        if DEBUG and self.entities != self._last_logged_entities:
+            self._last_logged_entities = dict(self.entities)
+            details = ", ".join(
+                f"{key}={self._entity_debug_description(entity_id)}"
+                for key, entity_id in sorted(self.entities.items())
             )
-        )
-        if DEBUG and signature != self._last_discovery_signature:
             log(
                 f"Entity discovery: serial={self.serial or '?'} phases={self.phase_count} "
-                f"ip={self.ip_address or '?'} mac={self.mac_address or '?'} "
-                f"entities={self.entities} number_ui={presentation}"
+                f"phase_source={self.phase_source} phase_confidence={self.phase_confidence} "
+                f"fuse_profile={self.main_fuse_profile}/{self.fuse_profile_source} "
+                f"ip={self.ip_address or '?'} "
+                f"mac={self.mac_address or '?'} "
+                f"registry={'yes' if self.registry_available else 'no'}; {details or 'no entities'}"
             )
-            self._last_discovery_signature = signature
 
 
 ENTITY_MAP = EntityMap()
@@ -1075,18 +1634,72 @@ def phase_count() -> int:
     return ENTITY_MAP.phase_count if ENTITY_MAP.phase_count in (1, 3) else 1
 
 
+def _setting_number(settings: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        value = parse_float(settings.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def resolved_fuse_profile() -> tuple[str, str]:
+    remote = normalize_fuse_profile(
+        REMOTE_INVERTER_SETTINGS.get("main_fuse_profile")
+        or REMOTE_INVERTER_SETTINGS.get("fuse_profile")
+        or nested_get(REMOTE_INVERTER_SETTINGS, ["main_fuse", "profile"])
+    )
+    if remote != "auto":
+        profile, source = remote, "ems_bms"
+    else:
+        local = normalize_fuse_profile(MAIN_FUSE_PROFILE_RAW)
+        if local != "auto":
+            profile, source = local, "local_option"
+        else:
+            profile = "3x25_plus" if phase_count() == 3 else "1x25"
+            source = f"phase_autodetect:{ENTITY_MAP.phase_source}"
+    ENTITY_MAP.main_fuse_profile = profile
+    ENTITY_MAP.fuse_profile_source = source
+    return profile, source
+
+
 def phase_charge_thresholds() -> tuple[float, float]:
-    trigger = parse_float(CHARGE_BLOCK_TRIGGER_RAW)
-    release = parse_float(CHARGE_BLOCK_RELEASE_RAW)
-    if trigger is None:
-        trigger = -8000.0 if phase_count() == 3 else -3500.0
-    if release is None:
-        release = -5000.0 if phase_count() == 3 else -2000.0
+    profile, _source = resolved_fuse_profile()
+    defaults = FUSE_PROFILES[profile]
+
+    # An explicitly entered local number is the final operator override.
+    local_trigger = parse_float(CHARGE_BLOCK_TRIGGER_RAW)
+    local_release = parse_float(CHARGE_BLOCK_RELEASE_RAW)
+    remote_trigger = _setting_number(
+        REMOTE_INVERTER_SETTINGS,
+        "charge_block_below_w",
+        "ha_charge_block_below_w",
+    )
+    remote_release = _setting_number(
+        REMOTE_INVERTER_SETTINGS,
+        "charge_block_release_above_w",
+        "ha_charge_block_release_above_w",
+    )
+    trigger = local_trigger if local_trigger is not None else (
+        remote_trigger if remote_trigger is not None else float(defaults["charge_block_below_w"])
+    )
+    release = local_release if local_release is not None else (
+        remote_release if remote_release is not None else float(defaults["charge_block_release_above_w"])
+    )
     return trigger, release
 
 
+def threshold_source() -> str:
+    if parse_float(CHARGE_BLOCK_TRIGGER_RAW) is not None or parse_float(CHARGE_BLOCK_RELEASE_RAW) is not None:
+        return "local_numeric_override"
+    if _setting_number(REMOTE_INVERTER_SETTINGS, "charge_block_below_w", "ha_charge_block_below_w") is not None or _setting_number(REMOTE_INVERTER_SETTINGS, "charge_block_release_above_w", "ha_charge_block_release_above_w") is not None:
+        return "ems_bms_numeric"
+    _profile, source = resolved_fuse_profile()
+    return source
+
+
 def phase_export_limit() -> int:
-    return 5000 if phase_count() == 3 else 3000
+    profile, _source = resolved_fuse_profile()
+    return int(FUSE_PROFILES[profile]["grid_export_limit_w"])
 
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1708,7 @@ def phase_export_limit() -> int:
 
 
 def number_entity_attrs(entity_id: str) -> dict[str, Any]:
-    state = ha_get_state(entity_id)
+    state = ha_get_state(entity_id) or ENTITY_MAP.state(entity_id)
     attrs = state.get("attributes") if state else None
     return attrs if isinstance(attrs, dict) else {}
 
@@ -1112,11 +1725,22 @@ def number_limit(entity_id: str, keys: tuple[str, ...]) -> float | None:
 def clamp_number_value(entity_id: str, value: float) -> float:
     minimum = number_limit(entity_id, ("min", "min_value", "native_min_value"))
     maximum = number_limit(entity_id, ("max", "max_value", "native_max_value"))
+    step = number_limit(entity_id, ("step", "native_step"))
     original = value
     if minimum is not None:
         value = max(value, minimum)
     if maximum is not None:
         value = min(value, maximum)
+    # NumberMode.SLIDER and NumberMode.BOX expose the same HA action.  Their
+    # min/max/step attributes may differ, so align the target with the entity's
+    # native step before calling set_value.
+    if step is not None and step > 0:
+        base = minimum or 0.0
+        value = base + round((value - base) / step) * step
+        if minimum is not None:
+            value = max(value, minimum)
+        if maximum is not None:
+            value = min(value, maximum)
     if DEBUG and abs(value - original) > 0.001:
         log(f"Number {entity_id}: clamped {original:g} to {value:g}")
     return value
@@ -1129,10 +1753,8 @@ def ha_set_number_value(entity_id: str, value: float, tolerance: float = 0.01) -
         return True
     domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
     if domain not in ("number", "input_number"):
-        log(f"WARN: {entity_id} is not a writable number/input_number entity")
+        log(f"WARN: {entity_id} is not a number/input_number entity")
         return False
-    # Home Assistant number mode 'slider' and 'box' are UI presentations only;
-    # both are written using the domain's set_value action.
     return ha_call_service(domain, "set_value", {"entity_id": entity_id, "value": value})
 
 
@@ -1174,12 +1796,8 @@ def ha_select_option(entity_id: str, option: str) -> bool:
     current = ha_get_state(entity_id)
     if current and normalize_key(current.get("state")) == normalize_key(selected):
         return True
-    domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
-    if domain not in ("select", "input_select"):
-        log(f"WARN: {entity_id} is not a writable select/input_select entity")
-        return False
     return ha_call_service(
-        domain, "select_option", {"entity_id": entity_id, "option": selected}
+        "select", "select_option", {"entity_id": entity_id, "option": selected}
     )
 
 
@@ -1191,12 +1809,8 @@ def ha_set_switch(entity_id: str, desired_state: str) -> bool:
     current = ha_get_state(entity_id)
     if current and str(current.get("state") or "").lower() == wanted:
         return True
-    domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
-    if domain not in ("switch", "input_boolean"):
-        log(f"WARN: {entity_id} is not a writable switch/input_boolean entity")
-        return False
     return ha_call_service(
-        domain, "turn_on" if desired else "turn_off", {"entity_id": entity_id}
+        "switch", "turn_on" if desired else "turn_off", {"entity_id": entity_id}
     )
 
 
@@ -1204,7 +1818,14 @@ def set_numbers(key: str, raw: str, value: float, label: str) -> bool:
     entities = resolved_entities(key, raw)
     if not entities:
         if DEBUG:
-            log(f"{label}: unsupported/not found")
+            if not _HA_INVENTORY_OK:
+                log_throttled(
+                    f"unresolved_{key}",
+                    f"{label}: not resolved because the HA inventory is unavailable"
+                    + (f" ({_HA_LAST_ERROR})" if _HA_LAST_ERROR else ""),
+                )
+            else:
+                log_throttled(f"unsupported_{key}", f"{label}: unsupported/not found")
         return True
     ok_all = True
     for entity_id in entities:
@@ -1220,7 +1841,14 @@ def set_switches(key: str, raw: str, desired: str, label: str) -> bool:
     entities = resolved_entities(key, raw)
     if not entities:
         if DEBUG:
-            log(f"{label}: unsupported/not found")
+            if not _HA_INVENTORY_OK:
+                log_throttled(
+                    f"unresolved_{key}",
+                    f"{label}: not resolved because the HA inventory is unavailable"
+                    + (f" ({_HA_LAST_ERROR})" if _HA_LAST_ERROR else ""),
+                )
+            else:
+                log_throttled(f"unsupported_{key}", f"{label}: unsupported/not found")
         return True
     ok_all = True
     for entity_id in entities:
@@ -1235,7 +1863,14 @@ def set_selects(key: str, raw: str, option: str, label: str) -> bool:
     entities = resolved_entities(key, raw)
     if not entities:
         if DEBUG:
-            log(f"{label}: unsupported/not found")
+            if not _HA_INVENTORY_OK:
+                log_throttled(
+                    f"unresolved_{key}",
+                    f"{label}: not resolved because the HA inventory is unavailable"
+                    + (f" ({_HA_LAST_ERROR})" if _HA_LAST_ERROR else ""),
+                )
+            else:
+                log_throttled(f"unsupported_{key}", f"{label}: unsupported/not found")
         return True
     ok_all = True
     for entity_id in entities:
@@ -1252,14 +1887,17 @@ def set_selects(key: str, raw: str, option: str, label: str) -> bool:
 
 
 def backup_yaml_content_ok(content: str) -> bool:
-    return all(
-        marker in content
-        for marker in (
-            "alias: Auto update everything",
-            "backup.create_automatic",
-            "update.install",
-            "entity_id: all",
-        )
+    """Return true only for the safe backup-only DWARS automation.
+
+    Legacy versions wrote an ``update.install`` action for ``entity_id: all``.
+    That defeats the protected-update policy and is deliberately not accepted
+    as valid content anymore.
+    """
+    return (
+        "alias: DWARS scheduled automatic backup" in content
+        and "backup.create_automatic" in content
+        and "update.install" not in content
+        and "entity_id: all" not in content
     )
 
 
@@ -1284,7 +1922,7 @@ def ensure_backup_yaml() -> dict[str, Any]:
                 content = (
                     BACKUP_YAML_CONTENT
                     if BACKUP_YAML_OVERWRITE
-                    else current.rstrip() + "\n\n# DWARS auto update automation\n" + BACKUP_YAML_CONTENT
+                    else current.rstrip() + "\n\n# DWARS safe backup automation\n" + BACKUP_YAML_CONTENT
                 )
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(content)
@@ -1381,6 +2019,7 @@ charge_block_until_ts = 0.0
 last_server_mode = 7
 last_server_power = 0
 last_action: dict[str, Any] = {}
+REMOTE_INVERTER_SETTINGS: dict[str, Any] = {}
 
 
 def read_entity_number(entity_id: str) -> float | None:
@@ -1505,9 +2144,9 @@ def standalone_settings_from_action(action: dict[str, Any]) -> dict[str, Any]:
 
 def standalone_enabled_from_action(action: dict[str, Any]) -> bool:
     remote = parse_bool_value(standalone_settings_from_action(action).get("enabled"))
-    # Standalone is a physical site property. A local explicit true must win over
-    # the BMS default false; the server can still enable it remotely as well.
-    return STANDALONE_ENABLED or remote is True
+    # The local add-on checkbox is an explicit site-level override.  A default
+    # false value returned by an older BMS record must not disable it.
+    return STANDALONE_ENABLED or bool(remote)
 
 
 def standalone_entity(raw: str, fallback_key: str) -> str:
@@ -1518,8 +2157,6 @@ def standalone_entity(raw: str, fallback_key: str) -> str:
 
 
 def apply_standalone_zero_export(action: dict[str, Any]) -> None:
-    if not HA_CONTROL_ENABLED or DISABLE_HA:
-        return
     if not standalone_enabled_from_action(action) or last_server_mode not in (0, 7):
         return
     standalone = standalone_settings_from_action(action)
@@ -1596,7 +2233,7 @@ def decide_pv_curtail(data: dict[str, Any]) -> bool | None:
 
 
 def apply_grid_export_limit(data: dict[str, Any]) -> None:
-    if not HA_CONTROL_ENABLED or DISABLE_HA or not PV_CURTAIL_ENABLED:
+    if not PV_CURTAIL_ENABLED:
         return
     decision = decide_pv_curtail(data)
     # Zonder actuele prijs is de veilige normale toestand de fase-afhankelijke
@@ -1673,6 +2310,11 @@ def read_telemetry() -> dict[str, Any]:
             "inverter_ip": ENTITY_MAP.ip_address or None,
             "inverter_mac": ENTITY_MAP.mac_address or None,
             "inverter_phases": phase_count(),
+            "inverter_phase_source": ENTITY_MAP.phase_source,
+            "inverter_phase_confidence": ENTITY_MAP.phase_confidence,
+            "main_fuse_profile": resolved_fuse_profile()[0],
+            "charge_block_below_w": int(round(phase_charge_thresholds()[0])),
+            "charge_block_release_above_w": int(round(phase_charge_thresholds()[1])),
             "inverter_last_seen_at": ENTITY_MAP.last_seen or None,
         }
     )
@@ -1705,6 +2347,28 @@ def upload_telemetry(payload: dict[str, Any]) -> None:
         log(f"Telemetry upload error: {exc}")
 
 
+def apply_remote_phase_setting(settings: dict[str, Any]) -> None:
+    """Store BMS settings and apply a phase hint without unsafe downgrades."""
+    global REMOTE_INVERTER_SETTINGS
+    REMOTE_INVERTER_SETTINGS = dict(settings or {})
+
+    remote_phases = parse_int(settings.get("phase_count"), 0) if settings else 0
+    if remote_phases not in (1, 3):
+        resolved_fuse_profile()
+        return
+
+    # Strong local hardware evidence wins over a conflicting weak BMS value.
+    # A BMS value may always promote an unknown/weak fallback to three phases.
+    if remote_phases == 3:
+        if ENTITY_MAP.phase_count != 3 or ENTITY_MAP.phase_confidence < 80:
+            ENTITY_MAP._set_phase(3, "bms", 80)
+    elif not (ENTITY_MAP.phase_count == 3 and ENTITY_MAP.phase_confidence >= 80):
+        if ENTITY_MAP.phase_source in ("unknown", "fallback_1_phase", "bms"):
+            ENTITY_MAP._set_phase(1, "bms", 80)
+
+    resolved_fuse_profile()
+
+
 def perform_decision_cycle() -> None:
     global last_action, last_server_mode, last_server_power
     action = fetch_next_action()
@@ -1714,20 +2378,7 @@ def perform_decision_cycle() -> None:
 
     # Server config can enable standalone mode or supply its external sensors.
     settings = inverter_settings_from_action(action)
-    remote_serial = normalize_serial(
-        settings.get("serial_number")
-        or settings.get("inverter_serial")
-        or action.get("inverter_serial")
-        or action.get("serial_number")
-    )
-    if remote_serial and remote_serial != ENTITY_MAP.serial:
-        ENTITY_MAP.serial = remote_serial
-        ENTITY_MAP.refresh()
-    remote_phases = parse_int(settings.get("phase_count"), 0) if settings else 0
-    if remote_phases in (1, 3):
-        # Een expliciete BMS-override of eerder door de agent gerapporteerde fase
-        # is leidend wanneer HA de fase nog niet heeft kunnen detecteren.
-        ENTITY_MAP.phase_count = remote_phases
+    apply_remote_phase_setting(settings)
     if settings and DEBUG:
         log(f"BMS inverter settings: {settings}")
 
@@ -1755,8 +2406,9 @@ def perform_decision_cycle() -> None:
     )
     log(
         f"Decision mode={last_server_mode} power={last_server_power}W; "
-        f"serial={ENTITY_MAP.serial or '?'} phases={phase_count()} "
-        f"SOC={telemetry.get('soc', '?')} grid={telemetry.get('grid_power_w', '?')}W "
+        f"serial={ENTITY_MAP.serial or '?'} phases={phase_count()}({ENTITY_MAP.phase_source}) "
+        f"fuse={resolved_fuse_profile()[0]} thresholds={phase_charge_thresholds()[0]:g}/{phase_charge_thresholds()[1]:g}W "
+        f"source={threshold_source()} SOC={telemetry.get('soc', '?')} grid={telemetry.get('grid_power_w', '?')}W "
         f"PV={telemetry.get('pv_power_w', '?')}W battery={telemetry.get('battery_power_w', '?')}W"
     )
 
@@ -1775,12 +2427,6 @@ def loop() -> None:
         f"Recommended defaults: DOD=90%, DOD on-grid=90%, DOD holding=off, "
         f"backup supply=on, operation=general, mode1=battery_standby, mode3=charge_battery"
     )
-    log(
-        f"HA auth mode={'supervisor_proxy' if ha_uses_supervisor_proxy() else 'direct'}; "
-        f"available_tokens={[source for source, _token in ha_token_candidates()]}"
-    )
-    if not HA_CONTROL_ENABLED:
-        log("WARN: ha_control_enabled=false; entity detection works but inverter writes are disabled")
 
     now = time.monotonic()
     next_discovery = now
@@ -1795,6 +2441,13 @@ def loop() -> None:
             if now >= next_discovery:
                 ENTITY_MAP.refresh()
                 next_discovery = now + ENTITY_DISCOVERY_INTERVAL
+
+            # Fetch BMS settings before the first 10-second safety check. This
+            # prevents a three-phase site from briefly using one-phase limits
+            # immediately after an add-on upgrade/restart.
+            if now >= next_decision:
+                perform_decision_cycle()
+                next_decision = now + DECISION_INTERVAL
 
             if now >= next_safety:
                 enforce_fast_safety()
@@ -1812,10 +2465,6 @@ def loop() -> None:
                 apply_managed_defaults(last_action)
                 apply_grid_export_limit(last_action)
                 next_defaults = now + DEFAULTS_INTERVAL
-
-            if now >= next_decision:
-                perform_decision_cycle()
-                next_decision = now + DECISION_INTERVAL
 
         except Exception as exc:
             log(f"ERROR: {exc}")

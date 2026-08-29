@@ -1,6 +1,6 @@
 {
   "name": "DWARS Generic EMS Add-on",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "slug": "dwars_addon",
   "description": "Generieke DWARS EMS bridge voor andere omvormers. Stuurt zelf gekozen Home Assistant select- of button/script-entities aan met configureerbare mode mapping.",
   "startup": "services",
@@ -47,7 +47,7 @@
     "ha_discharge_power_value": "server_power",
     "ha_idle_power_value": "skip",
     "ha_set_power_before_mode": true,
-    "backup_yaml_check_enabled": true,
+    "backup_yaml_check_enabled": false,
     "backup_yaml_path": "/config/backup.yaml",
     "backup_yaml_overwrite": false
   },

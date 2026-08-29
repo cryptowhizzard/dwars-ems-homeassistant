@@ -34,7 +34,7 @@ VERIFY_SSL = env_bool("VERIFY_SSL", True)
 AGENT_NAME = os.environ.get("ADDON_NAME", "DWARS Generic EMS Add-on")
 AGENT_VERSION = os.environ.get("ADDON_VERSION", "unknown")
 AGENT_TYPE = os.environ.get("AGENT_TYPE", "dwars")
-BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", True)
+BACKUP_YAML_CHECK_ENABLED = env_bool("BACKUP_YAML_CHECK_ENABLED", False)
 BACKUP_YAML_PATH = os.environ.get("BACKUP_YAML_PATH", "/config/backup.yaml")
 BACKUP_YAML_OVERWRITE = env_bool("BACKUP_YAML_OVERWRITE", False)
 
@@ -69,21 +69,13 @@ SET_POWER_BEFORE_MODE = env_bool("HA_SET_POWER_BEFORE_MODE", True)
 HEADERS_EXT = {"X-API-Key": API_KEY} if API_KEY else {}
 
 
-BACKUP_YAML_CONTENT = """- alias: Auto update everything
-  description: Automatically install updates
+BACKUP_YAML_CONTENT = """- alias: DWARS scheduled automatic backup
+  description: Create a Home Assistant backup; software updates are managed centrally by DWARS Installer.
   trigger:
     - platform: time
       at: "03:00:00"
-
   action:
     - service: backup.create_automatic
-
-    - delay: "00:02:00"
-
-    - service: update.install
-      target:
-        entity_id: all
-
   mode: single
 """
 
@@ -95,17 +87,16 @@ def truthy_text(value: Any, default: bool = False) -> bool:
 
 
 def backup_yaml_content_ok(content: str) -> bool:
-    required = (
-        "alias: Auto update everything",
-        "backup.create_automatic",
-        "update.install",
-        "entity_id: all",
+    return (
+        "alias: DWARS scheduled automatic backup" in content
+        and "backup.create_automatic" in content
+        and "update.install" not in content
+        and "entity_id: all" not in content
     )
-    return all(marker in content for marker in required)
 
 
 def ensure_backup_yaml() -> dict[str, Any]:
-    """Ensure /config/backup.yaml contains the DWARS auto-update automation."""
+    """Optionally ensure /config/backup.yaml contains a backup-only automation."""
     path = str(BACKUP_YAML_PATH or "/config/backup.yaml").strip() or "/config/backup.yaml"
     status: dict[str, Any] = {
         "backup_yaml_path": path,
@@ -132,7 +123,7 @@ def ensure_backup_yaml() -> dict[str, Any]:
                 if BACKUP_YAML_OVERWRITE:
                     new_content = BACKUP_YAML_CONTENT
                 else:
-                    separator = "\n\n# DWARS auto update automation\n"
+                    separator = "\n\n# DWARS safe backup automation\n"
                     new_content = current.rstrip() + separator + BACKUP_YAML_CONTENT
                 with open(path, "w", encoding="utf-8") as handle:
                     handle.write(new_content)

@@ -47,7 +47,7 @@ if [ -f /app/config.json ]; then
 fi
 AGENT_TYPE="dwars"
 
-BACKUP_YAML_CHECK_ENABLED=$(get_opt "backup_yaml_check_enabled" "true")
+BACKUP_YAML_CHECK_ENABLED=$(get_opt "backup_yaml_check_enabled" "false")
 BACKUP_YAML_PATH=$(get_opt "backup_yaml_path" "/config/backup.yaml")
 BACKUP_YAML_OVERWRITE=$(get_opt "backup_yaml_overwrite" "false")
 
