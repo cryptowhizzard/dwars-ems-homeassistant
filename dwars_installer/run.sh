@@ -2,11 +2,15 @@
 set -euo pipefail
 
 CONFIG_PATH="/data/options.json"
-HA_CONFIG_DIR="/homeassistant_config"
+HA_CONFIG_DIR="${HA_CONFIG_DIR:-/homeassistant_config}"
+if [ ! -d "$HA_CONFIG_DIR" ] && [ -d /config ]; then
+  HA_CONFIG_DIR=/config
+fi
 LOCAL_PAYLOAD_DIR="/app/payload"
 WORK_DIR="/tmp/dwars-installer"
 SUPERVISOR_API="http://supervisor"
 STATE_DIR="/data"
+SYSTEM_UPDATES_APPLIED="false"
 
 log() {
   printf '[DWARS Installer] %s\n' "$*" >&2
@@ -21,7 +25,13 @@ get_opt() {
   local key="$1"
   local default="${2-}"
   jq -r --arg k "$key" --arg d "$default" '
-    if has($k) then .[$k] else $d end // $d
+    def root: if ((.options? | type) == "object") and (has("inverter_type") | not) then .options else . end;
+    (root[$k] // null) as $v
+    | if $v == null then $d
+      elif ($v | type) == "object" or ($v | type) == "array" then $d
+      elif ($v | type) == "boolean" then (if $v then "true" else "false" end)
+      else ($v | tostring)
+      end
   ' "$CONFIG_PATH"
 }
 
@@ -437,98 +447,126 @@ configure_goodwe_agent() {
   local addon_slug="$1"
   [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
 
-  local options_payload
-  options_payload="$(jq -n \
+  local addon_info current_options desired_options merged_options options_payload api_key installer_key client_id installer_client_id
+  addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || echo '{}')"
+  current_options="$(printf '%s' "$addon_info" | jq -c '
+    (.data.options // .options // {})
+    | if ((.options? | type) == "object") and ((.api_url? | type) != "string") then .options else . end
+    | with_entries(select((.value|type) != "object" and (.value|type) != "array"))
+  ' 2>/dev/null || echo '{}')"
+
+  installer_key="$(get_opt goodwe_agent_api_key '')"
+  installer_client_id="$(get_opt goodwe_agent_client_id '')"
+  api_key="$(printf '%s' "$current_options" | jq -r '.api_key // ""')"
+  client_id="$(printf '%s' "$current_options" | jq -r '.client_id // ""')"
+  [ -n "$installer_key" ] && api_key="$installer_key"
+  [ -n "$installer_client_id" ] && client_id="$installer_client_id"
+
+  desired_options="$(jq -n \
     --arg api_url "$(get_opt goodwe_agent_api_url 'https://api.metdezon.nl/bms/api/next_action.php')" \
     --arg telemetry_url "$(get_opt goodwe_agent_telemetry_url 'https://api.metdezon.nl/bms/api/telemetry.php')" \
-    --arg api_key "$(get_opt goodwe_agent_api_key '')" \
-    --arg client_id "$(get_opt goodwe_agent_client_id '')" \
+    --arg api_key "$api_key" \
+    --arg client_id "$client_id" \
     --argjson poll_interval "$(get_opt goodwe_agent_poll_interval 60)" \
     --argjson power_watt "$(get_opt goodwe_agent_power_watt 5000)" \
     --argjson debug "$(get_bool goodwe_agent_debug true)" \
     --arg main_fuse "$(get_opt goodwe_agent_main_fuse_profile auto)" \
     '{
-      boot: "auto",
-      auto_update: true,
-      options: {
-        api_url: $api_url,
-        telemetry_url: $telemetry_url,
-        api_key: $api_key,
-        client_id: $client_id,
-        poll_interval: $poll_interval,
-        safety_interval: 10,
-        standalone_interval: 30,
-        defaults_interval: 60,
-        entity_discovery_interval: 60,
-        power_watt: $power_watt,
-        main_fuse_profile: $main_fuse,
-        soc_entity: "auto",
-        mode_entity: "",
-        pv_entity: "auto",
-        grid_entity: "auto",
-        battery_power_entity: "auto",
-        goodwe_serial_number: "",
-        goodwe_serial_entity: "auto",
-        goodwe_phase_entity: "auto",
-        goodwe_ip_entity: "auto",
-        goodwe_mac_entity: "auto",
-        goodwe_last_seen_entity: "auto",
-        ha_auto_entity_discovery: true,
-        ha_registry_discovery: true,
-        publish_diagnostic_entities: true,
-        debug: (if $debug then 1 else 0 end),
-        ha_url: "http://supervisor/core",
-        ha_token: "",
-        ha_control_enabled: true,
-        ha_ems_mode_select: "auto",
-        ha_ems_power_number: "auto",
-        ha_ems_power_value: "server_power",
-        ha_ems_set_power_modes: "3,4",
-        ha_ems_set_power_before_mode: true,
-        ha_ems_mode_0_option: "auto",
-        ha_ems_mode_1_option: "battery_standby",
-        ha_ems_mode_3_option: "charge_battery",
-        ha_ems_mode_4_option: "discharge_battery",
-        ha_ems_mode_7_option: "auto",
-        override_default_values: false,
-        goodwe_default_dod: 90,
-        goodwe_default_dod_on_grid: 90,
-        goodwe_default_dod_holding: "off",
-        goodwe_default_backup_supply: "on",
-        goodwe_default_operation_mode: "general",
-        ha_dod_holding_switch: "auto",
-        ha_backup_supply_switch: "auto",
-        ha_dod_number: "auto",
-        ha_dod_on_grid_number: "auto",
-        ha_operation_mode_select: "auto",
-        ha_charge_block_enabled: true,
-        ha_charge_block_sensor: "auto",
-        ha_charge_block_below_w: "auto",
-        ha_charge_block_release_above_w: "auto",
-        ha_charge_block_duration_sec: 300,
-        ha_charge_block_modes: "3",
-        ha_charge_block_fallback_option: "auto",
-        ha_grid_export_limit_number: "auto",
-        ha_grid_export_limit_switch: "auto",
-        ha_grid_export_limit_off_value: "0",
-        ha_grid_export_limit_default_value: "auto",
-        ha_grid_export_limit_switch_curtail_state: "on",
-        ha_grid_export_limit_switch_restore_state: "on",
-        ha_pv_curtail_below_eur_kwh: "",
-        ha_pv_curtail_enabled: true,
-        standalone_enabled: false,
-        standalone_pv_entity: "",
-        standalone_grid_entity: "auto",
-        standalone_deadband_w: 150,
-        standalone_max_charge_w: 0,
-        backup_yaml_check_enabled: true,
-        backup_yaml_path: "/config/backup.yaml",
-        backup_yaml_overwrite: false
-      }
+      api_url: $api_url,
+      telemetry_url: $telemetry_url,
+      api_key: $api_key,
+      client_id: $client_id,
+      poll_interval: $poll_interval,
+      safety_interval: 10,
+      standalone_interval: 30,
+      defaults_interval: 60,
+      entity_discovery_interval: 60,
+      power_watt: $power_watt,
+      main_fuse_profile: $main_fuse,
+      soc_entity: "auto",
+      mode_entity: "",
+      pv_entity: "auto",
+      grid_entity: "auto",
+      battery_power_entity: "auto",
+      goodwe_serial_number: "",
+      goodwe_serial_entity: "auto",
+      goodwe_phase_entity: "auto",
+      goodwe_ip_entity: "auto",
+      goodwe_mac_entity: "auto",
+      goodwe_last_seen_entity: "auto",
+      ha_auto_entity_discovery: true,
+      ha_registry_discovery: true,
+      publish_diagnostic_entities: true,
+      debug: (if $debug then 1 else 0 end),
+      ha_url: "http://supervisor/core",
+      ha_token: "",
+      ha_control_enabled: true,
+      ha_ems_mode_select: "auto",
+      ha_ems_power_number: "auto",
+      ha_ems_power_value: "server_power",
+      ha_ems_set_power_modes: "3,4",
+      ha_ems_set_power_before_mode: true,
+      ha_ems_mode_0_option: "auto",
+      ha_ems_mode_1_option: "battery_standby",
+      ha_ems_mode_3_option: "charge_battery",
+      ha_ems_mode_4_option: "discharge_battery",
+      ha_ems_mode_7_option: "auto",
+      override_default_values: false,
+      goodwe_default_dod: 90,
+      goodwe_default_dod_on_grid: 90,
+      goodwe_default_dod_holding: "off",
+      goodwe_default_backup_supply: "on",
+      goodwe_default_operation_mode: "general",
+      ha_dod_holding_switch: "auto",
+      ha_backup_supply_switch: "auto",
+      ha_dod_number: "auto",
+      ha_dod_on_grid_number: "auto",
+      ha_operation_mode_select: "auto",
+      ha_charge_block_enabled: true,
+      ha_charge_block_sensor: "auto",
+      ha_charge_block_below_w: "auto",
+      ha_charge_block_release_above_w: "auto",
+      ha_charge_block_duration_sec: 300,
+      ha_charge_block_modes: "3",
+      ha_charge_block_fallback_option: "auto",
+      ha_grid_export_limit_number: "auto",
+      ha_grid_export_limit_switch: "auto",
+      ha_grid_export_limit_off_value: "0",
+      ha_grid_export_limit_default_value: "auto",
+      ha_grid_export_limit_switch_curtail_state: "on",
+      ha_grid_export_limit_switch_restore_state: "on",
+      ha_pv_curtail_below_eur_kwh: "",
+      ha_pv_curtail_enabled: true,
+      standalone_enabled: false,
+      standalone_pv_entity: "",
+      standalone_grid_entity: "auto",
+      standalone_deadband_w: 150,
+      standalone_max_charge_w: 0,
+      backup_yaml_check_enabled: true,
+      backup_yaml_path: "/config/backup.yaml",
+      backup_yaml_overwrite: false
     }')"
 
-  log "GoodWe Agent configureren."
-  supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+  # Preserve bestaande handmatige klantinstellingen, maar vul nieuwe defaults aan.
+  # Bij een corrupte nested options-map wordt die hierboven eerst platgetrokken.
+  merged_options="$(jq -c -n --argjson current "$current_options" --argjson desired "$desired_options" '
+    ($desired + $current)
+    | .api_url = $desired.api_url
+    | .telemetry_url = $desired.telemetry_url
+    | .api_key = (if ($desired.api_key // "") != "" then $desired.api_key else (.api_key // "") end)
+    | .client_id = (if ($desired.client_id // "") != "" then $desired.client_id else (.client_id // "") end)
+    | .poll_interval = $desired.poll_interval
+    | .power_watt = $desired.power_watt
+    | .main_fuse_profile = (if ($desired.main_fuse_profile // "auto") != "auto" then $desired.main_fuse_profile else (.main_fuse_profile // "auto") end)
+  ')"
+  options_payload="$(jq -c -n --argjson options "$merged_options" '{boot:"auto", auto_update:true, options:$options}')"
+
+  log "GoodWe Agent configureren met gevalideerde platte options-map."
+  if ! supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null; then
+    log "GoodWe Agent options-save faalde; corrupte opgeslagen options worden gereset en daarna opnieuw toegepast."
+    supervisor_curl POST "/addons/${addon_slug}/options" '{"options":null}' >/dev/null || true
+    supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+  fi
 }
 
 configure_solaredge_agent() {
@@ -788,7 +826,11 @@ install_ha_update_entities() {
       continue
     fi
     log "${entity_id}: update.install uitvoeren."
-    ha_curl POST /services/update/install "$(jq -n --arg e "$entity_id" --argjson backup "$backup" '{entity_id:$e, backup:$backup}')" >/dev/null || log "${entity_id}: update.install faalde."
+    if ha_curl POST /services/update/install "$(jq -n --arg e "$entity_id" --argjson backup "$backup" '{entity_id:$e, backup:$backup}')" >/dev/null; then
+      SYSTEM_UPDATES_APPLIED="true"
+    else
+      log "${entity_id}: update.install faalde."
+    fi
     sleep 5
   done <<< "$entities"
 }
@@ -799,33 +841,63 @@ update_all_installed_addons() {
   backup="$(get_bool addon_update_backup false)"
   addons="$(supervisor_curl GET /addons 2>/dev/null || true)"
   [ -n "$addons" ] || return 0
-  printf '%s' "$addons" | jq -r '(.addons // .data.addons // [])[] | select(.installed == true) | [.slug, (.name // .slug), (.update_available // false)] | @tsv' | while IFS=$'\t' read -r slug name update_available; do
+  while IFS=$'\t' read -r slug name update_available; do
     [ -n "$slug" ] || continue
     if [ "$update_available" = "true" ]; then
       log "Add-on ${name} (${slug}) updaten."
-      supervisor_curl POST "/store/addons/${slug}/update" "$(jq -n --argjson backup "$backup" '{backup:$backup, background:false}')" >/dev/null || true
-      supervisor_curl POST "/addons/${slug}/restart" '{}' >/dev/null || true
+      if supervisor_curl POST "/store/addons/${slug}/update" "$(jq -n --argjson backup "$backup" '{backup:$backup, background:false}')" >/dev/null; then
+        SYSTEM_UPDATES_APPLIED="true"
+        supervisor_curl POST "/addons/${slug}/restart" '{}' >/dev/null || true
+      else
+        log "Add-on ${name} (${slug}) update faalde."
+      fi
     fi
-  done
+  done < <(printf '%s' "$addons" | jq -r '(.addons // .data.addons // [])[] | select(.installed == true) | [.slug, (.name // .slug), (.update_available // false)] | @tsv')
+}
+
+supervisor_update_if_available() {
+  local info_path="$1"
+  local update_path="$2"
+  local label="$3"
+  local info update_available
+  info="$(supervisor_curl GET "$info_path" 2>/dev/null || true)"
+  if [ -z "$info" ]; then
+    log "${label}: info niet beschikbaar; update overgeslagen."
+    return 0
+  fi
+  update_available="$(printf '%s' "$info" | jq -r '(.data.update_available // .update_available // false)' 2>/dev/null || echo false)"
+  if [ "$update_available" != "true" ]; then
+    log "${label}: geen update beschikbaar."
+    return 0
+  fi
+  log "${label}: update beschikbaar; update uitvoeren."
+  if supervisor_curl POST "$update_path" '{}' >/dev/null; then
+    SYSTEM_UPDATES_APPLIED="true"
+  else
+    log "${label}: update faalde."
+  fi
 }
 
 update_supervisor_core_os_best_effort() {
   [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
-  log "Supervisor/Core/OS updates best-effort uitvoeren."
-  try_supervisor_curl POST /supervisor/update '{}' >/dev/null
-  try_supervisor_curl POST /core/update '{}' >/dev/null
-  try_supervisor_curl POST /os/update '{}' >/dev/null
+  log "Supervisor/Core/OS updates controleren."
+  supervisor_update_if_available /supervisor/info /supervisor/update "Supervisor"
+  supervisor_update_if_available /core/info /core/update "Home Assistant Core"
+  supervisor_update_if_available /os/info /os/update "Home Assistant OS"
 }
 
 run_full_system_update_cycle() {
   [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
+  SYSTEM_UPDATES_APPLIED="false"
   log "Volledige automatische updatecyclus gestart."
   install_ha_update_entities || true
   update_all_installed_addons || true
   update_supervisor_core_os_best_effort || true
-  if [ "$(get_bool auto_full_system_update_reboot true)" = "true" ]; then
-    log "Host reboot aanvragen na updatecyclus."
+  if [ "$SYSTEM_UPDATES_APPLIED" = "true" ] && [ "$(get_bool auto_full_system_update_reboot true)" = "true" ]; then
+    log "Minimaal één update toegepast; host reboot aanvragen."
     try_supervisor_curl POST /host/reboot '{}' >/dev/null
+  else
+    log "Geen toegepaste updates of reboot uitgeschakeld; geen host reboot."
   fi
 }
 
@@ -867,13 +939,20 @@ main() {
   run_full_system_update_cycle || true
   log "Install/update cycle klaar."
 
-  if [ "$(get_bool watch_for_embedded_updates true)" = "true" ] || [ "$(get_bool auto_update_from_github false)" = "true" ]; then
-    local interval
-    interval="$(get_opt update_check_interval_sec 21600)"
-    log "Updater blijft actief en controleert iedere ${interval}s op custom component én agent add-on wijzigingen."
+  if [ "$(get_bool watch_for_embedded_updates true)" = "true" ] || [ "$(get_bool auto_update_from_github false)" = "true" ] || [ "$(get_bool auto_full_system_update true)" = "true" ]; then
+    local interval full_interval last_full now_ts
+    interval="$(get_opt update_check_interval_sec 900)"
+    full_interval="$(get_opt auto_full_system_update_interval_sec 21600)"
+    last_full="$(date +%s)"
+    log "Updater blijft actief: repo/add-ons iedere ${interval}s, volledige systeemupdates iedere ${full_interval}s."
     while true; do
       sleep "$interval"
       run_install_cycle || log "Update cycle gaf een fout; volgende interval probeert opnieuw."
+      now_ts="$(date +%s)"
+      if [ $((now_ts - last_full)) -ge "$full_interval" ]; then
+        run_full_system_update_cycle || true
+        last_full="$now_ts"
+      fi
     done
   fi
 

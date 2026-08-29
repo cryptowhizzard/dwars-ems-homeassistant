@@ -6,13 +6,22 @@ OPT_FILE=/data/options.json
 get_opt() {
   local key="$1" default="${2-}"
   if [ -f "$OPT_FILE" ]; then
-    # Do not use jq's `//` operator here: it treats an explicit boolean false
-    # as missing.  That made unchecked add-on options silently fall back to
-    # their defaults (for example ha_control_enabled=false became true).
-    if jq -e --arg key "$key" 'has($key) and .[$key] != null' "$OPT_FILE" >/dev/null 2>&1; then
-      jq -r --arg key "$key" '.[$key]' "$OPT_FILE"
-      return 0
-    fi
+    # Robuust tegen twee situaties:
+    # 1) boolean false moet false blijven en mag niet als ontbrekend worden gezien;
+    # 2) sommige mislukte Supervisor/UI upgrades kunnen per ongeluk een geneste
+    #    {"options": {...}} in /data/options.json achterlaten. In dat geval lezen
+    #    we de geneste options-map alsof die de root is. Object/array-waarden voor
+    #    simpele opties worden geweigerd, zodat "expected str. Got {...}" niet
+    #    verder de runtime in lekt.
+    jq -r --arg key "$key" --arg d "$default" '
+      def root: if ((.options? | type) == "object") and (has("api_url") | not) then .options else . end;
+      (root[$key] // null) as $v
+      | if $v == null then $d
+        elif ($v | type) == "object" or ($v | type) == "array" then $d
+        elif ($v | type) == "boolean" then (if $v then "true" else "false" end)
+        else ($v | tostring)
+        end
+    ' "$OPT_FILE" 2>/dev/null && return 0
   fi
   printf '%s' "$default"
 }

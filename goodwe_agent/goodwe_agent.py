@@ -171,7 +171,7 @@ PV_CURTAIL_BELOW_EUR_KWH_ENV = os.environ.get(
 PV_CURTAIL_ENABLED = env_bool("HA_PV_CURTAIL_ENABLED", True)
 
 # Fast fuse protection.  Thresholds use "auto" by default:
-# one phase -3500/-2000 W; three phase -8000/-5000 W.
+# thresholds are controlled by main_fuse_profile: 1x25 -3600/-2000, 1x35 -5000/-3500, 3x25_plus -10000/-7500.
 CHARGE_BLOCK_ENABLED = env_bool("HA_CHARGE_BLOCK_ENABLED", True)
 CHARGE_BLOCK_SENSOR_RAW = os.environ.get("HA_CHARGE_BLOCK_SENSOR", "auto")
 CHARGE_BLOCK_TRIGGER_RAW = os.environ.get("HA_CHARGE_BLOCK_BELOW_W", "auto")
@@ -1187,43 +1187,6 @@ class EntityMap:
                 self.last_seen = value or self.last_seen
 
     def _detect_phase_count(self) -> None:
-        # Explicit EMS/BMS hoofdzekeringprofiel is de hoogste prioriteit. Dit is
-        # een administratieve installatiekeuze en moet een onbetrouwbare of oude
-        # phase sensor kunnen overschrijven.
-        fuse_profile = normalize_main_fuse_profile(self.main_fuse_profile or MAIN_FUSE_PROFILE_ENV)
-        defaults = main_fuse_defaults(fuse_profile)
-        if defaults and defaults.get("phase_count") in (1, 3):
-            self.phase_count = int(defaults["phase_count"])
-            self.phase_source = "main_fuse_profile"
-            return
-
-        l2_l3_patterns = (
-            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_(?:l?2|l?3)(?:_|$)",
-            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_phase_?(?:2|3)(?:_|$)",
-            r"(?:^|_)l[23](?:_|$)",
-            r"(?:^|_)phase_?[23](?:_|$)",
-        )
-        l2_l3_found = False
-        for state in self._goodwe_states():
-            if state_is_agent_diagnostic(state):
-                continue
-            # De aanwezigheid van een fysieke L2/L3-entity is voldoende bewijs.
-            # Een actuele waarde van 0 W betekent alleen geen belasting op die
-            # fase; niet dat de omvormer eenfase is.
-            if not _state_available(state):
-                continue
-            for value, _base in self._candidate_fields(state):
-                field = normalize_key(value)
-                if any(re.search(pattern, field) for pattern in l2_l3_patterns):
-                    l2_l3_found = True
-                    break
-            if l2_l3_found:
-                break
-        if l2_l3_found:
-            self.phase_count = 3
-            self.phase_source = "l2_l3_entity_presence"
-            return
-
         phase_state = self._state_by_entity.get(self.entity("phase"))
         if phase_state and not state_is_agent_diagnostic(phase_state):
             phase = parse_int(phase_state.get("state"), 0)
@@ -1231,6 +1194,34 @@ class EntityMap:
                 self.phase_count = phase
                 self.phase_source = "phase_entity"
                 return
+
+        l2_l3_patterns = (
+            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_(?:l?2|l?3)(?:_|$)",
+            r"(?:^|_)(?:active_power|pgrid|grid_power|meter_power|voltage|current)_phase_?(?:2|3)(?:_|$)",
+            r"(?:^|_)l[23](?:_|$)",
+            r"(?:^|_)phase_?[23](?:_|$)",
+        )
+        for state in self._goodwe_states():
+            if state_is_agent_diagnostic(state):
+                continue
+            # The existence of a physical L2/L3 entity is enough. A 0 W reading on
+            # L2 or L3 is still a three-phase inverter; do not classify it as one
+            # phase just because there is no current load on that phase.
+            if not _state_available(state):
+                continue
+            for value, _base in self._candidate_fields(state):
+                field = normalize_key(value)
+                if any(re.search(pattern, field) for pattern in l2_l3_patterns):
+                    self.phase_count = 3
+                    self.phase_source = "l2_l3_entity_presence"
+                    return
+
+        fuse_profile = normalize_main_fuse_profile(self.main_fuse_profile or MAIN_FUSE_PROFILE_ENV)
+        defaults = main_fuse_defaults(fuse_profile)
+        if defaults and defaults.get("phase_count") in (1, 3):
+            self.phase_count = int(defaults["phase_count"])
+            self.phase_source = "main_fuse_profile"
+            return
 
         # Unknown remains unknown until BMS or the HA registry gives usable proof.
         # phase_charge_thresholds() deliberately uses the conservative 3x25 profile
@@ -1258,7 +1249,7 @@ class EntityMap:
             ),
             (
                 f"{prefix}_inverter_nr_phase",
-                self.phase_count or 0,
+                self.phase_count or 1,
                 {"friendly_name": f"GoodWe {self.serial} inverter phase count", "icon": "mdi:sine-wave"},
             ),
         ]
@@ -2209,7 +2200,7 @@ def upload_telemetry(payload: dict[str, Any]) -> None:
 
 
 def apply_remote_phase_setting(settings: dict[str, Any]) -> None:
-    """Apply BMS hoofdzekering/phase hints without letting stale HA sensors win."""
+    """Apply BMS main-fuse/phase hints without overriding stronger HA proof."""
     if not settings:
         return
 
@@ -2218,29 +2209,23 @@ def apply_remote_phase_setting(settings: dict[str, Any]) -> None:
         ENTITY_MAP.main_fuse_profile = profile
         defaults = main_fuse_defaults(profile)
         if defaults and defaults.get("phase_count") in (1, 3):
-            # Hoofdzekeringsprofiel is een bewuste onboarding-/klantinstelling en
-            # heeft voorrang op een phase_entity die tijdens de eerste minuten na
-            # een update soms nog 1 rapporteert.
-            ENTITY_MAP.phase_count = int(defaults["phase_count"])
-            ENTITY_MAP.phase_source = "main_fuse_bms"
-        return
+            remote_phases = int(defaults["phase_count"])
+            if ENTITY_MAP.phase_source in ("unknown", "main_fuse_profile", "bms") or (
+                ENTITY_MAP.phase_source == "single_phase_inventory" and remote_phases == 3
+            ):
+                ENTITY_MAP.phase_count = remote_phases
+                ENTITY_MAP.phase_source = "main_fuse_bms"
+            return
 
     remote_phases = parse_int(settings.get("phase_count"), 0)
     if remote_phases not in (1, 3):
         return
 
     source = ENTITY_MAP.phase_source
-    if remote_phases == 3:
-        # BMS 3-fase mag een oude/onjuiste phase_entity=1 overschrijven. Fysieke
-        # L2/L3-detectie blijft inhoudelijk hetzelfde bewijs en wordt niet geschaad.
-        ENTITY_MAP.phase_count = 3
-        ENTITY_MAP.phase_source = "bms"
-        return
-
-    # Remote 1-fase is bruikbaar zolang er geen fysiek L2/L3-bewijs of 3x25-
-    # hoofdzekering bekend is.
-    if source not in ("l2_l3_entity_presence", "main_fuse_bms", "main_fuse_profile"):
-        ENTITY_MAP.phase_count = 1
+    if source in ("unknown", "bms", "main_fuse_profile") or (
+        source == "single_phase_inventory" and remote_phases == 3
+    ):
+        ENTITY_MAP.phase_count = remote_phases
         ENTITY_MAP.phase_source = "bms"
 
 

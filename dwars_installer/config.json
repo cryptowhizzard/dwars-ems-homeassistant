@@ -1,8 +1,8 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "slug": "dwars_installer",
-  "description": "Installeert en update DWARS custom components, inverter agents en voert optioneel volledige Home Assistant/Raspberry updates uit.",
+  "description": "Installeert en update DWARS custom components, inverter agents en voert optioneel volledige Home Assistant/Raspberry updates uit met veilige GoodWe-options recovery.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",
@@ -17,11 +17,7 @@
   "hassio_role": "manager",
   "stage": "experimental",
   "map": [
-    {
-      "type": "homeassistant_config",
-      "read_only": false,
-      "path": "/homeassistant_config"
-    }
+    "config:rw"
   ],
   "options": {
     "inverter_type": "both",
@@ -193,7 +189,7 @@
     "auto_full_system_update_backup": "bool",
     "auto_full_system_update_reboot": "bool",
     "skip_upstream_goodwe_updates": "bool",
-    "goodwe_agent_main_fuse_profile": "list(auto|3x25_plus|1x35|1x25)"
+    "goodwe_agent_main_fuse_profile": "str"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",

@@ -1,8 +1,8 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "slug": "goodwe_agent",
-  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met hoofdzekeringgestuurde fase-/laadblokkadedetectie, Supervisor-authenticatie, 10s zekeringbewaking, 30s standalone nulregeling en 60s synchronisatie.",
+  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met gerepareerde add-on options-validatie, hoofdzekeringgestuurde fase-/laadblokkadedetectie en Supervisor-authenticatie.",
   "startup": "services",
   "boot": "auto",
   "homeassistant_api": true,
@@ -163,7 +163,7 @@
     "backup_yaml_check_enabled": "bool",
     "backup_yaml_path": "str",
     "backup_yaml_overwrite": "bool",
-    "main_fuse_profile": "list(auto|3x25_plus|1x35|1x25)"
+    "main_fuse_profile": "str"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
