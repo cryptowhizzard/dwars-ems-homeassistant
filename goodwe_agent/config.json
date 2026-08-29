@@ -1,6 +1,6 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.4",
+  "version": "1.8.5",
   "slug": "goodwe_agent",
   "description": "GoodWe bridge voor DWARS/MetDeZon BMS met gerepareerde add-on options-validatie, hoofdzekeringgestuurde fase-/laadblokkadedetectie en Supervisor-authenticatie.",
   "startup": "services",

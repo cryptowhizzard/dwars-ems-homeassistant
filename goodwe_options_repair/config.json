@@ -1,0 +1,33 @@
+{
+  "name": "GoodWe Options Repair",
+  "version": "0.1.1",
+  "slug": "goodwe_options_repair",
+  "description": "One-shot hersteltool: reset GoodWe Agent options voor legacy upgrades en behoud alleen api_key en ha_token.",
+  "arch": [
+    "aarch64",
+    "amd64",
+    "armhf",
+    "armv7",
+    "i386"
+  ],
+  "startup": "once",
+  "boot": "manual",
+  "init": false,
+  "hassio_api": true,
+  "hassio_role": "manager",
+  "homeassistant_api": false,
+  "options": {
+    "target_slug": "auto",
+    "run_update": true,
+    "restart_after_update": false,
+    "preserve_only_api_key_and_ha_token": true
+  },
+  "schema": {
+    "target_slug": "str",
+    "run_update": "bool",
+    "restart_after_update": "bool",
+    "preserve_only_api_key_and_ha_token": "bool"
+  },
+  "map": [],
+  "image": null
+}

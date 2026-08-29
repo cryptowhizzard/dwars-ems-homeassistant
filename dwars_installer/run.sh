@@ -345,6 +345,172 @@ rebuild_addon_if_repo_source_changed() {
   return 1
 }
 
+
+goodwe_version_lt_1_7() {
+  local version="${1:-0.0.0}" major minor rest
+  version="${version%%-*}"
+  major="${version%%.*}"
+  rest="${version#*.}"
+  if [ "$rest" = "$version" ]; then
+    minor=0
+  else
+    minor="${rest%%.*}"
+  fi
+  case "$major" in ''|*[!0-9]*) return 0 ;; esac
+  case "$minor" in ''|*[!0-9]*) minor=0 ;; esac
+  if [ "$major" -lt 1 ]; then
+    return 0
+  fi
+  if [ "$major" -eq 1 ] && [ "$minor" -lt 7 ]; then
+    return 0
+  fi
+  return 1
+}
+
+repair_goodwe_options_for_current_schema() {
+  local addon_slug="$1"
+  local addon_info schema_keys raw_options clean_options payload current_version legacy_reset
+
+  addon_info="$(get_addon_info_json "$addon_slug")"
+  if [ -z "$addon_info" ]; then
+    log "GoodWe Agent: kan huidige addon-info niet lezen; options-repair overgeslagen."
+    return 0
+  fi
+
+  current_version="$(json_field "$addon_info" version '0.0.0')"
+  legacy_reset="false"
+  if [ "$(get_bool reset_legacy_goodwe_options_below_1_7 true)" = "true" ] && goodwe_version_lt_1_7 "$current_version"; then
+    legacy_reset="true"
+  fi
+
+  # Belangrijk: dit draait VOOR de update. Gebruik daarom uitsluitend velden
+  # die in de NU geïnstalleerde schema bestaan. Anders weigert Supervisor de
+  # repair nog vóórdat de nieuwe versie geïnstalleerd is.
+  schema_keys="$(printf '%s' "$addon_info" | jq -c '((.data.schema // .schema // {}) | if type == "object" then keys else [] end)' 2>/dev/null || echo '[]')"
+  raw_options="$(printf '%s' "$addon_info" | jq -c '(.data.options // .options // {})' 2>/dev/null || echo '{}')"
+
+  if [ "$legacy_reset" = "true" ]; then
+    log "GoodWe Agent: versie ${current_version:-onbekend} is lager dan 1.7; reset alle opties naar defaults en behoud alleen api_key en ha_token."
+  fi
+
+  clean_options="$(jq -c -n \
+    --argjson raw "$raw_options" \
+    --argjson schema_keys "$schema_keys" \
+    --arg legacy_reset "$legacy_reset" '
+      def scalar: (type != "object" and type != "array");
+      def as_string: if scalar then tostring else "" end;
+      def legacy_defaults: {
+        api_url: "https://api.metdezon.nl/bms/api/next_action.php",
+        telemetry_url: "https://api.metdezon.nl/bms/api/telemetry.php",
+        api_key: "",
+        client_id: "",
+        poll_interval: 60,
+        safety_interval: 10,
+        standalone_interval: 30,
+        defaults_interval: 60,
+        entity_discovery_interval: 60,
+        power_watt: 5000,
+        soc_entity: "auto",
+        mode_entity: "",
+        pv_entity: "auto",
+        grid_entity: "auto",
+        battery_power_entity: "auto",
+        goodwe_serial_number: "",
+        goodwe_serial_entity: "auto",
+        goodwe_phase_entity: "auto",
+        goodwe_ip_entity: "auto",
+        goodwe_mac_entity: "auto",
+        goodwe_last_seen_entity: "auto",
+        ha_auto_entity_discovery: true,
+        debug: 1,
+        ha_url: "http://supervisor/core",
+        ha_token: "",
+        ha_control_enabled: true,
+        ha_ems_mode_select: "auto",
+        ha_ems_power_number: "auto",
+        ha_ems_power_value: "server_power",
+        ha_ems_set_power_modes: "3,4",
+        ha_ems_set_power_before_mode: true,
+        ha_ems_mode_0_option: "auto",
+        ha_ems_mode_1_option: "battery_standby",
+        ha_ems_mode_3_option: "charge_battery",
+        ha_ems_mode_4_option: "discharge_battery",
+        ha_ems_mode_7_option: "auto",
+        override_default_values: false,
+        goodwe_default_dod: 90,
+        goodwe_default_dod_on_grid: 90,
+        goodwe_default_dod_holding: "off",
+        goodwe_default_backup_supply: "on",
+        goodwe_default_operation_mode: "general",
+        ha_dod_holding_switch: "auto",
+        ha_backup_supply_switch: "auto",
+        ha_dod_number: "auto",
+        ha_dod_on_grid_number: "auto",
+        ha_operation_mode_select: "auto",
+        ha_charge_block_enabled: true,
+        ha_charge_block_sensor: "auto",
+        ha_charge_block_below_w: "auto",
+        ha_charge_block_release_above_w: "auto",
+        ha_charge_block_duration_sec: 300,
+        ha_charge_block_modes: "3",
+        ha_charge_block_fallback_option: "auto",
+        ha_grid_export_limit_number: "auto",
+        ha_grid_export_limit_switch: "auto",
+        ha_grid_export_limit_off_value: "0",
+        ha_grid_export_limit_default_value: "auto",
+        ha_grid_export_limit_switch_curtail_state: "on",
+        ha_grid_export_limit_switch_restore_state: "on",
+        ha_pv_curtail_below_eur_kwh: "",
+        ha_pv_curtail_enabled: true,
+        standalone_enabled: false,
+        standalone_pv_entity: "",
+        standalone_grid_entity: "auto",
+        standalone_deadband_w: 150,
+        standalone_max_charge_w: 0,
+        backup_yaml_check_enabled: true,
+        backup_yaml_path: "/config/backup.yaml",
+        backup_yaml_overwrite: false
+      };
+      # Ondersteun zowel een corrupte root {options:{...}} als een root met
+      # daarnaast een corrupte options-key. Scalars uit root winnen van nested.
+      ($raw.options // {}) as $nested
+      | ((if ($nested|type) == "object" then $nested else {} end) + (if ($raw|type)=="object" then $raw else {} end)) as $merged
+      | if $legacy_reset == "true" then
+          # Voor upgrades vanuit <1.7: GEEN oude entitynamen/limieten/standalone/fasewaarden meenemen.
+          # Alleen credentials blijven staan. Dit bootst praktisch een verse installatie na.
+          legacy_defaults
+          | .api_key = (($merged.api_key // "") | as_string)
+          | .ha_token = (($merged.ha_token // "") | as_string)
+        else
+          (legacy_defaults + $merged)
+          | del(.options)
+          | with_entries(select(.value | scalar))
+        end
+      | del(.options)
+      | if ($schema_keys | length) > 0 then with_entries(select(.key as $k | $schema_keys | index($k))) else . end
+    ' 2>/dev/null || echo '{}')"
+
+  if [ "$clean_options" = "{}" ] || [ -z "$clean_options" ]; then
+    log "GoodWe Agent: lege clean options-map; repair overgeslagen."
+    return 0
+  fi
+
+  payload="$(jq -c -n --argjson options "$clean_options" '{options:$options}')"
+  if [ "$legacy_reset" = "true" ]; then
+    log "GoodWe Agent: legacy reset-options opslaan vóór update."
+  else
+    log "GoodWe Agent: opgeslagen options normaliseren vóór update, zodat Supervisor-validatie niet op een oude nested map faalt."
+  fi
+
+  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null; then
+    return 0
+  fi
+
+  log "GoodWe Agent: normale repair faalde; reset naar null en herhaal met schema-compatibele platte options."
+  supervisor_curl POST "/addons/${addon_slug}/options" '{"options":null}' >/dev/null || true
+  supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null || true
+}
+
 update_addon_if_available() {
   local addon_slug="$1"
   local base_slug="$2"
@@ -372,6 +538,10 @@ update_addon_if_available() {
 
   if [ "$installed" != "true" ]; then
     return 0
+  fi
+
+  if [ "$base_slug" = "goodwe_agent" ]; then
+    repair_goodwe_options_for_current_schema "$addon_slug" || true
   fi
 
   if [ -n "$current" ] && [ "$current" != "null" ] && [ -n "$latest" ] && [ "$latest" != "null" ]; then
@@ -430,11 +600,7 @@ ensure_addon_installed() {
     log "${label}: geïnstalleerd (${current:-onbekend}, latest=${latest:-onbekend})."
   fi
 
-  # GoodWe wordt pas geüpdatet nadat de bestaande options eerst zijn opgeschoond.
-  # Anders kan Supervisor de update blokkeren op een corrupte/nested legacy options-map.
-  if [ "$base_slug" != "goodwe_agent" ]; then
-    update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
-  fi
+  update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
   printf '%s' "$addon_slug"
 }
 
@@ -447,57 +613,11 @@ set_addon_boot_auto_update() {
   fi
 }
 
-repair_goodwe_agent_options_before_update() {
-  local addon_slug="$1"
-  local addon_info current_options payload payload_with_compat
-
-  addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || echo '{}')"
-
-  # Sommige eerdere installer/builds hebben per ongeluk een volledige options-map
-  # als waarde van de option "options" opgeslagen. Supervisor valideert dat vóór
-  # een add-on-update en blokkeert dan met: expected str. Got {api_url: ...}.
-  # Deze stap maakt daar weer een platte scalar-only options-map van vóórdat de
-  # GoodWe Agent zelf wordt geüpdatet.
-  current_options="$(printf '%s' "$addon_info" | jq -c '
-    (.data.options // .options // {}) as $root
-    | (if (($root.options? | type) == "object") and (($root.api_url? | type) != "string")
-       then $root.options
-       else $root
-       end)
-    | with_entries(select(
-        (.key != "schema")
-        and ((.value|type) != "object")
-        and ((.value|type) != "array")
-      ))
-  ' 2>/dev/null || echo '{}')"
-
-  if [ -z "$current_options" ] || [ "$current_options" = "null" ]; then
-    current_options='{}'
-  fi
-
-  payload="$(jq -c -n --argjson options "$current_options" '{options:$options}')"
-  payload_with_compat="$(jq -c -n --argjson options "$current_options" '{options:($options + {options:""})}')"
-
-  log "GoodWe Agent: bestaande options pre-repair uitvoeren vóór update."
-  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload_with_compat" >/dev/null 2>&1; then
-    log "GoodWe Agent: options pre-repair OK met legacy options-compatibiliteit."
-    return 0
-  fi
-
-  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null 2>&1; then
-    log "GoodWe Agent: options pre-repair OK met platte options-map."
-    return 0
-  fi
-
-  log "GoodWe Agent: options pre-repair kon niet worden opgeslagen op de huidige versie; update wordt toch geprobeerd."
-  return 1
-}
-
 configure_goodwe_agent() {
   local addon_slug="$1"
   [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
 
-  local addon_info current_options desired_options merged_options options_payload api_key installer_key client_id installer_client_id
+  local addon_info current_options desired_options merged_options options_payload api_key installer_key client_id installer_client_id ha_token
   addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || echo '{}')"
   current_options="$(printf '%s' "$addon_info" | jq -c '
     (.data.options // .options // {})
@@ -509,6 +629,7 @@ configure_goodwe_agent() {
   installer_client_id="$(get_opt goodwe_agent_client_id '')"
   api_key="$(printf '%s' "$current_options" | jq -r '.api_key // ""')"
   client_id="$(printf '%s' "$current_options" | jq -r '.client_id // ""')"
+  ha_token="$(printf '%s' "$current_options" | jq -r '.ha_token // ""')"
   [ -n "$installer_key" ] && api_key="$installer_key"
   [ -n "$installer_client_id" ] && client_id="$installer_client_id"
 
@@ -517,6 +638,7 @@ configure_goodwe_agent() {
     --arg telemetry_url "$(get_opt goodwe_agent_telemetry_url 'https://api.metdezon.nl/bms/api/telemetry.php')" \
     --arg api_key "$api_key" \
     --arg client_id "$client_id" \
+    --arg ha_token "$ha_token" \
     --argjson poll_interval "$(get_opt goodwe_agent_poll_interval 60)" \
     --argjson power_watt "$(get_opt goodwe_agent_power_watt 5000)" \
     --argjson debug "$(get_bool goodwe_agent_debug true)" \
@@ -549,7 +671,7 @@ configure_goodwe_agent() {
       publish_diagnostic_entities: true,
       debug: (if $debug then 1 else 0 end),
       ha_url: "http://supervisor/core",
-      ha_token: "",
+      ha_token: $ha_token,
       ha_control_enabled: true,
       ha_ems_mode_select: "auto",
       ha_ems_power_number: "auto",
@@ -605,6 +727,7 @@ configure_goodwe_agent() {
     | .telemetry_url = $desired.telemetry_url
     | .api_key = (if ($desired.api_key // "") != "" then $desired.api_key else (.api_key // "") end)
     | .client_id = (if ($desired.client_id // "") != "" then $desired.client_id else (.client_id // "") end)
+    | .ha_token = (if ($desired.ha_token // "") != "" then $desired.ha_token else (.ha_token // "") end)
     | .poll_interval = $desired.poll_interval
     | .power_watt = $desired.power_watt
     | .main_fuse_profile = (if ($desired.main_fuse_profile // "auto") != "auto" then $desired.main_fuse_profile else (.main_fuse_profile // "auto") end)
@@ -793,8 +916,6 @@ install_or_configure_agents() {
     goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent / BMS' "$source_root" || true)"
     if [ -n "$goodwe_slug" ]; then
       set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent / BMS"
-      repair_goodwe_agent_options_before_update "$goodwe_slug" || true
-      update_addon_if_available "$goodwe_slug" goodwe_agent "GoodWe Agent / BMS" "$source_root" || true
       configure_goodwe_agent "$goodwe_slug"
       start_addon_if_requested "$goodwe_slug" "GoodWe Agent / BMS"
     fi
