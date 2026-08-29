@@ -7,7 +7,9 @@ get_opt() {
   local key="$1" default="${2-}"
   if [ -f "$OPT_FILE" ]; then
     local value
-    value="$(jq -r --arg key "$key" '.[$key] // empty' "$OPT_FILE" 2>/dev/null || true)"
+    # jq's `//` treats boolean false as absent. Use has() so unchecked
+    # checkboxes remain false instead of silently reverting to their defaults.
+    value="$(jq -r --arg key "$key" 'if has($key) and .[$key] != null then .[$key] else empty end' "$OPT_FILE" 2>/dev/null || true)"
     if [ -n "$value" ] && [ "$value" != "null" ]; then
       printf '%s' "$value"
       return 0
@@ -41,18 +43,18 @@ POWER_WATT="$(get_opt power_watt 5000)"
 DEBUG="$(get_opt debug 1)"
 
 # HA API/auth. http://supervisor/core becomes .../api in Python.
+#
+# The Supervisor Core proxy requires the injected SUPERVISOR_TOKEN. A manually
+# configured long-lived token is retained only as a fallback (and is preferred
+# when ha_url points directly to Home Assistant instead of the Supervisor proxy).
 RAW_HA_URL="$(get_opt ha_url 'http://supervisor/core')"
-RAW_HA_TOKEN="$(get_opt ha_token '')"
-if [ -n "$RAW_HA_TOKEN" ] && [ "$RAW_HA_TOKEN" != "null" ]; then
-  HA_TOKEN="$RAW_HA_TOKEN"
-  HA_URL="$RAW_HA_URL"
-  if [ -z "$HA_URL" ] || [ "$HA_URL" = "null" ]; then
-    HA_URL='http://homeassistant:8123'
-  fi
-else
-  HA_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
-  HA_URL="${RAW_HA_URL:-http://supervisor/core}"
+CONFIGURED_HA_TOKEN="$(get_opt ha_token '')"
+HA_URL="${RAW_HA_URL:-http://supervisor/core}"
+if [ -z "$HA_URL" ] || [ "$HA_URL" = "null" ]; then
+  HA_URL='http://supervisor/core'
 fi
+HA_TOKEN="$CONFIGURED_HA_TOKEN"
+SUPERVISOR_ACCESS_TOKEN="${SUPERVISOR_TOKEN:-${HASSIO_TOKEN:-}}"
 
 # Serial-specific auto discovery and telemetry entities
 SOC_ENTITY="$(get_opt soc_entity auto)"
@@ -137,7 +139,7 @@ export ADDON_VERSION ADDON_NAME AGENT_TYPE
 export API_URL API_KEY TELEMETRY_URL CLIENT_ID
 export INTERVAL="$POLL_INTERVAL" SAFETY_INTERVAL STANDALONE_INTERVAL DEFAULTS_INTERVAL ENTITY_DISCOVERY_INTERVAL
 export POWER="$POWER_WATT" DEBUG
-export HA_URL HA_TOKEN HA_CONTROL_ENABLED HA_AUTO_ENTITY_DISCOVERY
+export HA_URL HA_TOKEN CONFIGURED_HA_TOKEN SUPERVISOR_ACCESS_TOKEN HA_CONTROL_ENABLED HA_AUTO_ENTITY_DISCOVERY
 export SOC_ENTITY MODE_ENTITY PV_ENTITY GRID_ENTITY BATTERY_POWER_ENTITY
 export GOODWE_SERIAL_NUMBER GOODWE_SERIAL_ENTITY GOODWE_PHASE_ENTITY GOODWE_IP_ENTITY GOODWE_MAC_ENTITY GOODWE_LAST_SEEN_ENTITY
 export HA_EMS_MODE_SELECT HA_EMS_POWER_NUMBER HA_EMS_POWER_VALUE HA_EMS_SET_POWER_MODES HA_EMS_SET_POWER_BEFORE_MODE
@@ -152,6 +154,9 @@ export BACKUP_YAML_CHECK_ENABLED BACKUP_YAML_PATH BACKUP_YAML_OVERWRITE
 printf '[GoodWe] version=%s API=%s key_length=%s HA=%s decision=%ss safety=%ss standalone=%ss\n' \
   "$ADDON_VERSION" "$API_URL" "$(printf %s "$API_KEY" | wc -c | tr -d ' ')" "$HA_URL" \
   "$POLL_INTERVAL" "$SAFETY_INTERVAL" "$STANDALONE_INTERVAL"
+printf '[GoodWe] HA auth: supervisor_token=%s configured_token=%s; supervisor proxy prefers SUPERVISOR_TOKEN\n' \
+  "$( [ -n "$SUPERVISOR_ACCESS_TOKEN" ] && printf yes || printf no )" \
+  "$( [ -n "$CONFIGURED_HA_TOKEN" ] && printf yes || printf no )"
 printf '[GoodWe] modes: 1=%s 3=%s 4=%s 7=%s override_defaults=%s\n' \
   "$HA_EMS_MODE_1_OPTION" "$HA_EMS_MODE_3_OPTION" "$HA_EMS_MODE_4_OPTION" "$HA_EMS_MODE_7_OPTION" "$OVERRIDE_DEFAULT_VALUES"
 printf '[GoodWe] phase defaults: thresholds=%s/%s export_limit=%s; standalone=%s external_pv=%s\n' \
