@@ -1,8 +1,8 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.4.4",
+  "version": "0.4.6",
   "slug": "dwars_installer",
-  "description": "Installeert en update DWARS custom components, inverter agents en voert optioneel volledige Home Assistant/Raspberry updates uit met legacy GoodWe reset.",
+  "description": "Installeert en update DWARS componenten en migreert GoodWe Agent <1.7 door persisted options eerst volledig te wissen en daarna alleen api_key/ha_token terug te zetten.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",

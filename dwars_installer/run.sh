@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG_PATH="/data/options.json"
+CONFIG_PATH="${CONFIG_PATH:-/data/options.json}"
 HA_CONFIG_DIR="${HA_CONFIG_DIR:-/homeassistant_config}"
 if [ ! -d "$HA_CONFIG_DIR" ] && [ -d /config ]; then
   HA_CONFIG_DIR=/config
 fi
 LOCAL_PAYLOAD_DIR="/app/payload"
 WORK_DIR="/tmp/dwars-installer"
-SUPERVISOR_API="http://supervisor"
-STATE_DIR="/data"
+SUPERVISOR_API="${SUPERVISOR_API:-http://supervisor}"
+STATE_DIR="${STATE_DIR:-/data}"
+GOODWE_DEFAULTS_ONLY_MARKER="${GOODWE_DEFAULTS_ONLY_MARKER:-${HA_CONFIG_DIR}/.dwars_goodwe_defaults_only.json}"
 SYSTEM_UPDATES_APPLIED="false"
 
 log() {
@@ -367,148 +368,191 @@ goodwe_version_lt_1_7() {
   return 1
 }
 
-repair_goodwe_options_for_current_schema() {
-  local addon_slug="$1"
-  local addon_info schema_keys raw_options clean_options payload current_version legacy_reset
+GOODWE_LEGACY_MIGRATION_PERFORMED="false"
 
-  addon_info="$(get_addon_info_json "$addon_slug")"
-  if [ -z "$addon_info" ]; then
-    log "GoodWe Agent: kan huidige addon-info niet lezen; options-repair overgeslagen."
-    return 0
+version_lt_semver() {
+  local left="${1:-0}" right="${2:-0}"
+  local l1 l2 l3 r1 r2 r3
+  left="${left%%-*}"; right="${right%%-*}"
+  IFS=. read -r l1 l2 l3 _ <<<"$left"
+  IFS=. read -r r1 r2 r3 _ <<<"$right"
+  l1="${l1:-0}"; l2="${l2:-0}"; l3="${l3:-0}"
+  r1="${r1:-0}"; r2="${r2:-0}"; r3="${r3:-0}"
+  [[ "$l1" =~ ^[0-9]+$ ]] || l1=0
+  [[ "$l2" =~ ^[0-9]+$ ]] || l2=0
+  [[ "$l3" =~ ^[0-9]+$ ]] || l3=0
+  [[ "$r1" =~ ^[0-9]+$ ]] || r1=0
+  [[ "$r2" =~ ^[0-9]+$ ]] || r2=0
+  [[ "$r3" =~ ^[0-9]+$ ]] || r3=0
+  (( l1 < r1 )) && return 0
+  (( l1 > r1 )) && return 1
+  (( l2 < r2 )) && return 0
+  (( l2 > r2 )) && return 1
+  (( l3 < r3 ))
+}
+
+extract_goodwe_secret_recursive() {
+  local json="$1" key="$2"
+  printf '%s' "$json" | jq -r --arg key "$key" '
+    [
+      .. | objects | .[$key]?
+      | select(type == "string")
+      | select(length > 0)
+    ][0] // ""
+  ' 2>/dev/null || true
+}
+
+validate_goodwe_stored_options() {
+  local addon_slug="$1" response valid message
+  response="$(supervisor_curl POST "/addons/${addon_slug}/options/validate")"
+  valid="$(printf '%s' "$response" | jq -r '(.data.valid // .valid // true) | tostring' 2>/dev/null || printf true)"
+  if [ "$valid" != "true" ]; then
+    message="$(printf '%s' "$response" | jq -r '(.data.message // .message // "onbekende validatiefout")' 2>/dev/null || true)"
+    log "GoodWe Agent: options-validatie faalde: ${message}"
+    return 1
   fi
+  return 0
+}
 
-  current_version="$(json_field "$addon_info" version '0.0.0')"
-  legacy_reset="false"
-  if [ "$(get_bool reset_legacy_goodwe_options_below_1_7 true)" = "true" ] && goodwe_version_lt_1_7 "$current_version"; then
-    legacy_reset="true"
-  fi
+goodwe_options_with_credentials() {
+  # Bewust alleen deze twee custom options opslaan. Alle overige waarden blijven
+  # afkomstig uit de defaults van de geïnstalleerde GoodWe Agent-versie.
+  local _defaults_ignored="$1" api_key="$2" ha_token="$3"
+  jq -c -n \
+    --arg api_key "$api_key" \
+    --arg ha_token "$ha_token" \
+    '{api_key:$api_key, ha_token:$ha_token}'
+}
 
-  # Belangrijk: dit draait VOOR de update. Gebruik daarom uitsluitend velden
-  # die in de NU geïnstalleerde schema bestaan. Anders weigert Supervisor de
-  # repair nog vóórdat de nieuwe versie geïnstalleerd is.
-  schema_keys="$(printf '%s' "$addon_info" | jq -c '((.data.schema // .schema // {}) | if type == "object" then keys else [] end)' 2>/dev/null || echo '[]')"
-  raw_options="$(printf '%s' "$addon_info" | jq -c '(.data.options // .options // {})' 2>/dev/null || echo '{}')"
+save_goodwe_options() {
+  local addon_slug="$1" options="$2" payload
+  payload="$(jq -c -n --argjson options "$options" '{options:$options}')"
+  supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null
+}
 
-  if [ "$legacy_reset" = "true" ]; then
-    log "GoodWe Agent: versie ${current_version:-onbekend} is lager dan 1.7; reset alle opties naar defaults en behoud alleen api_key en ha_token."
-  fi
-
-  clean_options="$(jq -c -n \
-    --argjson raw "$raw_options" \
-    --argjson schema_keys "$schema_keys" \
-    --arg legacy_reset "$legacy_reset" '
-      def scalar: (type != "object" and type != "array");
-      def as_string: if scalar then tostring else "" end;
-      def legacy_defaults: {
-        api_url: "https://api.metdezon.nl/bms/api/next_action.php",
-        telemetry_url: "https://api.metdezon.nl/bms/api/telemetry.php",
-        api_key: "",
-        client_id: "",
-        poll_interval: 60,
-        safety_interval: 10,
-        standalone_interval: 30,
-        defaults_interval: 60,
-        entity_discovery_interval: 60,
-        power_watt: 5000,
-        soc_entity: "auto",
-        mode_entity: "",
-        pv_entity: "auto",
-        grid_entity: "auto",
-        battery_power_entity: "auto",
-        goodwe_serial_number: "",
-        goodwe_serial_entity: "auto",
-        goodwe_phase_entity: "auto",
-        goodwe_ip_entity: "auto",
-        goodwe_mac_entity: "auto",
-        goodwe_last_seen_entity: "auto",
-        ha_auto_entity_discovery: true,
-        debug: 1,
-        ha_url: "http://supervisor/core",
-        ha_token: "",
-        ha_control_enabled: true,
-        ha_ems_mode_select: "auto",
-        ha_ems_power_number: "auto",
-        ha_ems_power_value: "server_power",
-        ha_ems_set_power_modes: "3,4",
-        ha_ems_set_power_before_mode: true,
-        ha_ems_mode_0_option: "auto",
-        ha_ems_mode_1_option: "battery_standby",
-        ha_ems_mode_3_option: "charge_battery",
-        ha_ems_mode_4_option: "discharge_battery",
-        ha_ems_mode_7_option: "auto",
-        override_default_values: false,
-        goodwe_default_dod: 90,
-        goodwe_default_dod_on_grid: 90,
-        goodwe_default_dod_holding: "off",
-        goodwe_default_backup_supply: "on",
-        goodwe_default_operation_mode: "general",
-        ha_dod_holding_switch: "auto",
-        ha_backup_supply_switch: "auto",
-        ha_dod_number: "auto",
-        ha_dod_on_grid_number: "auto",
-        ha_operation_mode_select: "auto",
-        ha_charge_block_enabled: true,
-        ha_charge_block_sensor: "auto",
-        ha_charge_block_below_w: "auto",
-        ha_charge_block_release_above_w: "auto",
-        ha_charge_block_duration_sec: 300,
-        ha_charge_block_modes: "3",
-        ha_charge_block_fallback_option: "auto",
-        ha_grid_export_limit_number: "auto",
-        ha_grid_export_limit_switch: "auto",
-        ha_grid_export_limit_off_value: "0",
-        ha_grid_export_limit_default_value: "auto",
-        ha_grid_export_limit_switch_curtail_state: "on",
-        ha_grid_export_limit_switch_restore_state: "on",
-        ha_pv_curtail_below_eur_kwh: "",
-        ha_pv_curtail_enabled: true,
-        standalone_enabled: false,
-        standalone_pv_entity: "",
-        standalone_grid_entity: "auto",
-        standalone_deadband_w: 150,
-        standalone_max_charge_w: 0,
-        backup_yaml_check_enabled: true,
-        backup_yaml_path: "/config/backup.yaml",
-        backup_yaml_overwrite: false
-      };
-      # Ondersteun zowel een corrupte root {options:{...}} als een root met
-      # daarnaast een corrupte options-key. Scalars uit root winnen van nested.
-      ($raw.options // {}) as $nested
-      | ((if ($nested|type) == "object" then $nested else {} end) + (if ($raw|type)=="object" then $raw else {} end)) as $merged
-      | if $legacy_reset == "true" then
-          # Voor upgrades vanuit <1.7: GEEN oude entitynamen/limieten/standalone/fasewaarden meenemen.
-          # Alleen credentials blijven staan. Dit bootst praktisch een verse installatie na.
-          legacy_defaults
-          | .api_key = (($merged.api_key // "") | as_string)
-          | .ha_token = (($merged.ha_token // "") | as_string)
-        else
-          (legacy_defaults + $merged)
-          | del(.options)
-          | with_entries(select(.value | scalar))
-        end
-      | del(.options)
-      | if ($schema_keys | length) > 0 then with_entries(select(.key as $k | $schema_keys | index($k))) else . end
-    ' 2>/dev/null || echo '{}')"
-
-  if [ "$clean_options" = "{}" ] || [ -z "$clean_options" ]; then
-    log "GoodWe Agent: lege clean options-map; repair overgeslagen."
-    return 0
-  fi
-
-  payload="$(jq -c -n --argjson options "$clean_options" '{options:$options}')"
-  if [ "$legacy_reset" = "true" ]; then
-    log "GoodWe Agent: legacy reset-options opslaan vóór update."
+restore_legacy_goodwe_after_failed_update() {
+  local addon_slug="$1" old_defaults="$2" api_key="$3" ha_token="$4"
+  local restored
+  restored="$(goodwe_options_with_credentials "$old_defaults" "$api_key" "$ha_token")"
+  log "GoodWe Agent: update mislukte; geldige ${5:-oude}-defaults met credentials herstellen."
+  if save_goodwe_options "$addon_slug" "$restored" && validate_goodwe_stored_options "$addon_slug"; then
+    log "GoodWe Agent: oude configuratie is hersteld."
   else
-    log "GoodWe Agent: opgeslagen options normaliseren vóór update, zodat Supervisor-validatie niet op een oude nested map faalt."
+    log "GoodWe Agent: WAARSCHUWING: automatisch herstel faalde; credentialbackup staat in ${STATE_DIR}/goodwe-legacy-credentials.json."
   fi
+}
 
-  if supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null; then
+wait_for_goodwe_version_change() {
+  local addon_slug="$1" old_version="$2" target_version="$3" timeout_sec="${4:-600}"
+  local started now info version
+  started="$(date +%s)"
+  while true; do
+    info="$(get_addon_info_json "$addon_slug")"
+    version="$(json_field "$info" version '0.0.0')"
+    if [ "$version" != "$old_version" ] && ! goodwe_version_lt_1_7 "$version"; then
+      if [ -z "$target_version" ] || [ "$target_version" = "null" ] || [ "$version" = "$target_version" ] || ! version_lt_semver "$version" "$target_version"; then
+        printf '%s\n' "$version"
+        return 0
+      fi
+    fi
+    now="$(date +%s)"
+    if (( now - started >= timeout_sec )); then
+      return 1
+    fi
+    sleep 5
+  done
+}
+
+run_goodwe_store_update() {
+  local addon_slug="$1"
+  try_supervisor_curl POST /store/reload '{}' >/dev/null
+  try_supervisor_curl POST /addons/reload '{}' >/dev/null
+  if supervisor_curl POST "/store/addons/${addon_slug}/update" '{"backup":false,"background":false}' >/dev/null; then
     return 0
   fi
+  supervisor_curl POST "/addons/${addon_slug}/update" '{}' >/dev/null
+}
 
-  log "GoodWe Agent: normale repair faalde; reset naar null en herhaal met schema-compatibele platte options."
-  supervisor_curl POST "/addons/${addon_slug}/options" '{"options":null}' >/dev/null || true
-  supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null || true
+migrate_legacy_goodwe_options_and_update() {
+  local addon_slug="$1" previous_state="$2"
+  local info current_version raw_options api_key ha_token reset_info old_defaults
+  local store_info target_version new_version new_info new_defaults new_options installer_key
+
+  GOODWE_LEGACY_MIGRATION_PERFORMED="false"
+  [ "$(get_bool reset_legacy_goodwe_options_below_1_7 true)" = "true" ] || return 0
+
+  info="$(get_addon_info_json "$addon_slug")"
+  current_version="$(json_field "$info" version '0.0.0')"
+  goodwe_version_lt_1_7 "$current_version" || return 0
+
+  raw_options="$(printf '%s' "$info" | jq -c '(.data.options // .options // {}) | if type == "object" then . else {} end' 2>/dev/null || echo '{}')"
+  api_key="$(extract_goodwe_secret_recursive "$raw_options" api_key)"
+  ha_token="$(extract_goodwe_secret_recursive "$raw_options" ha_token)"
+  installer_key="$(get_opt goodwe_agent_api_key '')"
+  [ -n "$installer_key" ] && api_key="$installer_key"
+
+  jq -n \
+    --arg slug "$addon_slug" \
+    --arg version "$current_version" \
+    --arg api_key "$api_key" \
+    --arg ha_token "$ha_token" \
+    '{slug:$slug, source_version:$version, api_key:$api_key, ha_token:$ha_token}' \
+    >"${STATE_DIR}/goodwe-legacy-credentials.json"
+  chmod 600 "${STATE_DIR}/goodwe-legacy-credentials.json" 2>/dev/null || true
+
+  log "GoodWe Agent: legacy ${current_version} gevonden; api_key lengte=${#api_key}, ha_token lengte=${#ha_token}."
+  log "GoodWe Agent: ALLE persisted options worden eerst met options=null verwijderd. Er worden vóór de update geen 1.8-defaults tegen de 1.5-schema opgeslagen."
+
+  supervisor_curl POST "/addons/${addon_slug}/options" '{"options":null}' >/dev/null \
+    || { log "GoodWe Agent: legacy reset via options=null mislukte; update wordt niet gestart."; return 1; }
+
+  validate_goodwe_stored_options "$addon_slug" \
+    || { log "GoodWe Agent: old-version defaults zijn na reset niet geldig; update wordt niet gestart."; return 1; }
+
+  reset_info="$(get_addon_info_json "$addon_slug")"
+  old_defaults="$(printf '%s' "$reset_info" | jq -c '(.data.options // .options // {}) | if type == "object" then . else {} end' 2>/dev/null || echo '{}')"
+  if [ "$old_defaults" = '{}' ]; then
+    log "GoodWe Agent: geldige old-version defaults konden na reset niet worden gelezen."
+    return 1
+  fi
+
+  store_info="$(get_store_addon_info_json "$addon_slug")"
+  target_version="$(printf '%s' "$store_info" | jq -r '(.data.version // .data.version_latest // .version // .version_latest // "")' 2>/dev/null || true)"
+  log "GoodWe Agent: legacy options zijn leeg; update starten${target_version:+ naar ${target_version}}."
+
+  if ! run_goodwe_store_update "$addon_slug"; then
+    restore_legacy_goodwe_after_failed_update "$addon_slug" "$old_defaults" "$api_key" "$ha_token" "$current_version"
+    return 1
+  fi
+
+  if ! new_version="$(wait_for_goodwe_version_change "$addon_slug" "$current_version" "$target_version" 600)"; then
+    restore_legacy_goodwe_after_failed_update "$addon_slug" "$old_defaults" "$api_key" "$ha_token" "$current_version"
+    log "GoodWe Agent: versie veranderde niet binnen 600 seconden."
+    return 1
+  fi
+
+  log "GoodWe Agent: update geslaagd ${current_version} -> ${new_version}; nu pas api_key en ha_token terugzetten."
+  new_info="$(get_addon_info_json "$addon_slug")"
+  new_defaults="$(printf '%s' "$new_info" | jq -c '(.data.options // .options // {}) | if type == "object" then . else {} end' 2>/dev/null || echo '{}')"
+  if [ "$new_defaults" = '{}' ]; then
+    log "GoodWe Agent: nieuwe defaults konden niet worden gelezen; credentials staan in ${STATE_DIR}/goodwe-legacy-credentials.json."
+    return 1
+  fi
+
+  new_options="$(goodwe_options_with_credentials "$new_defaults" "$api_key" "$ha_token")"
+  save_goodwe_options "$addon_slug" "$new_options" \
+    || { log "GoodWe Agent: nieuwe defaults + credentials konden niet worden opgeslagen."; return 1; }
+  validate_goodwe_stored_options "$addon_slug" \
+    || { log "GoodWe Agent: nieuwe options zijn na credential-restore niet geldig."; return 1; }
+
+  supervisor_curl POST "/addons/${addon_slug}/options" '{"boot":"auto","auto_update":true}' >/dev/null || true
+  mkdir -p "$(dirname "$GOODWE_DEFAULTS_ONLY_MARKER")" 2>/dev/null || true
+  jq -n --arg slug "$addon_slug" --arg version "$new_version" \
+    '{slug:$slug, migrated_version:$version, defaults_only:true}' >"$GOODWE_DEFAULTS_ONLY_MARKER" 2>/dev/null || true
+  chmod 600 "$GOODWE_DEFAULTS_ONLY_MARKER" 2>/dev/null || true
+  restart_agent_after_addon_change "$addon_slug" "GoodWe Agent / BMS" "$previous_state"
+  GOODWE_LEGACY_MIGRATION_PERFORMED="true"
+  return 0
 }
 
 update_addon_if_available() {
@@ -541,7 +585,20 @@ update_addon_if_available() {
   fi
 
   if [ "$base_slug" = "goodwe_agent" ]; then
-    repair_goodwe_options_for_current_schema "$addon_slug" || true
+    if ! migrate_legacy_goodwe_options_and_update "$addon_slug" "$state"; then
+      log "${label}: legacy options-migratie/update faalde; verdere configuratie wordt gestopt."
+      return 1
+    fi
+    if [ "$GOODWE_LEGACY_MIGRATION_PERFORMED" = "true" ]; then
+      version_update_done="true"
+      addon_info="$(get_addon_info_json "$addon_slug")"
+      store_info="$(get_store_addon_info_json "$addon_slug")"
+      current="$(json_field "$addon_info" version '')"
+      latest="$(json_field "$store_info" version_latest '')"
+      [ -n "$latest" ] && [ "$latest" != "null" ] || latest="$(json_field "$store_info" version '')"
+      update_available="false"
+      state="$(json_field "$addon_info" state '')"
+    fi
   fi
 
   if [ -n "$current" ] && [ "$current" != "null" ] && [ -n "$latest" ] && [ "$latest" != "null" ]; then
@@ -600,7 +657,12 @@ ensure_addon_installed() {
     log "${label}: geïnstalleerd (${current:-onbekend}, latest=${latest:-onbekend})."
   fi
 
-  update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root" || true
+  if ! update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root"; then
+    if [ "$base_slug" = "goodwe_agent" ]; then
+      log "${label}: installatie/update afgebroken omdat de legacy-migratie niet veilig is voltooid."
+      return 1
+    fi
+  fi
   printf '%s' "$addon_slug"
 }
 
@@ -618,7 +680,25 @@ configure_goodwe_agent() {
   [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
 
   local addon_info current_options desired_options merged_options options_payload api_key installer_key client_id installer_client_id ha_token
+  local marker_slug raw_options
   addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info" 2>/dev/null || echo '{}')"
+
+  if [ -f "$GOODWE_DEFAULTS_ONLY_MARKER" ]; then
+    marker_slug="$(jq -r '.slug // ""' "$GOODWE_DEFAULTS_ONLY_MARKER" 2>/dev/null || true)"
+    if [ -z "$marker_slug" ] || [ "$marker_slug" = "$addon_slug" ]; then
+      raw_options="$(printf '%s' "$addon_info" | jq -c '(.data.options // .options // {}) | if type == "object" then . else {} end' 2>/dev/null || echo '{}')"
+      api_key="$(extract_goodwe_secret_recursive "$raw_options" api_key)"
+      ha_token="$(extract_goodwe_secret_recursive "$raw_options" ha_token)"
+      installer_key="$(get_opt goodwe_agent_api_key '')"
+      [ -n "$installer_key" ] && api_key="$installer_key"
+      options_payload="$(jq -c -n --arg api_key "$api_key" --arg ha_token "$ha_token" '{boot:"auto", auto_update:true, options:{api_key:$api_key, ha_token:$ha_token}}')"
+      log "GoodWe Agent: defaults-only migratiemodus actief; uitsluitend api_key en ha_token blijven custom options."
+      supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+      validate_goodwe_stored_options "$addon_slug"
+      return 0
+    fi
+  fi
+
   current_options="$(printf '%s' "$addon_info" | jq -c '
     (.data.options // .options // {})
     | if ((.options? | type) == "object") and ((.api_url? | type) != "string") then .options else . end
@@ -1133,4 +1213,6 @@ main() {
   while true; do sleep 86400; done
 }
 
-main "$@"
+if [ "${DWARS_INSTALLER_LIB_ONLY:-false}" != "true" ]; then
+  main "$@"
+fi

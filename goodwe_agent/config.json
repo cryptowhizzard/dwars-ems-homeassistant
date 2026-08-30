@@ -1,8 +1,8 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.5",
+  "version": "1.8.6",
   "slug": "goodwe_agent",
-  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met gerepareerde add-on options-validatie, hoofdzekeringgestuurde fase-/laadblokkadedetectie en Supervisor-authenticatie.",
+  "description": "GoodWe bridge voor DWARS/MetDeZon BMS met entity-detectie, hoofdzekeringgestuurde charge-blockdrempels en veilige legacy options-migratie via DWARS Installer.",
   "startup": "services",
   "boot": "auto",
   "homeassistant_api": true,

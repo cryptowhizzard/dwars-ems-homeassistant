@@ -1,5 +1,5 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=0.4.0
+ARG BUILD_VERSION=0.4.6
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
@@ -18,7 +18,6 @@ RUN apk add --no-cache \
     bash \
     curl \
     jq \
-    python3 \
     unzip \
     coreutils \
     ca-certificates \
@@ -26,8 +25,7 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 COPY run.sh /app/run.sh
-COPY system_updater.py /app/system_updater.py
 RUN mkdir -p /app/payload
-RUN chmod +x /app/run.sh /app/system_updater.py
+RUN chmod +x /app/run.sh
 
 CMD [ "/app/run.sh" ]

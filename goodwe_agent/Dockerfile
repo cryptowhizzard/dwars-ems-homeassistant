@@ -1,12 +1,12 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=1.8.5
+ARG BUILD_VERSION=1.8.6
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
 ARG BUILD_VERSION
 
 LABEL \
-  io.hass.version="1.8.5" \
+  io.hass.version="1.8.6" \
   io.hass.type="app" \
   io.hass.arch="${BUILD_ARCH}" \
   org.opencontainers.image.title="GoodWe Agent" \
