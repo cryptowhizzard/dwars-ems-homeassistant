@@ -55,29 +55,47 @@ _PRE_SCAN_CACHE_LOCK = threading.Lock()
 
 @dataclass(frozen=True)
 class GoodweDiscoveryResult:
-    """A discovered GoodWe inverter response or TCP/ARP candidate."""
+    """A discovered or positively identified GoodWe inverter."""
 
     host: str
     mac: str | None = None
     name: str | None = None
+    serial_number: str | None = None
+    model_name: str | None = None
+    model_family: str | None = None
+    port: int | None = None
+    protocol: str | None = None
+
+    @property
+    def identity_key(self) -> str:
+        """Return the strongest available identity for one scan result."""
+        if self.serial_number:
+            return self.serial_number.strip("\x00 \t\r\n").upper()
+        return self.mac or self.host
 
     @property
     def label(self) -> str:
-        """Return a human readable selection label."""
+        """Return a human-readable selection label."""
         parts = [self.host]
+        if self.serial_number:
+            parts.append(f"S/N {self.serial_number}")
+        if self.model_name:
+            parts.append(self.model_name)
         if self.mac:
             parts.append(self.mac)
-        if self.name:
+        if self.name and self.name not in parts:
             parts.append(self.name)
+        if self.protocol and self.port:
+            parts.append(f"{self.protocol}/{self.port}")
         return " - ".join(parts)
 
 
-def normalize_mac(mac: str | None) -> str | None:
+def normalize_mac(mac: Any) -> str | None:
     """Normalize a MAC address for Home Assistant storage.
 
     Returns ``None`` if the value is missing or malformed.
     """
-    if not mac:
+    if not isinstance(mac, str) or not mac:
         return None
 
     cleaned = re.sub(r"[^0-9A-Fa-f]", "", mac)
@@ -302,9 +320,18 @@ def _pre_scan_network_sync(network_cidr: str) -> list[str]:
     if cached and now - cached[0] < _PRE_SCAN_CACHE_TTL:
         return list(cached[1])
 
-    open_hosts = _nmap_scan(network_cidr)
-    if open_hosts is None:
-        open_hosts = _fallback_subnet_scan(network_cidr)
+    nmap_hosts = _nmap_scan(network_cidr)
+
+    # Always perform the lightweight socket sweep as well.  Nmap uses its own
+    # raw ARP handling on a local Ethernet network and does not reliably fill
+    # Linux' /proc/net/arp cache.  The socket sweep is intentionally bounded and
+    # makes every live host available as an ARP candidate, including UDP/8899
+    # GoodWe Wi-Fi kits that do not expose TCP/502 or answer the broadcast.
+    socket_hosts = _fallback_subnet_scan(network_cidr)
+    open_hosts = sorted(
+        set(socket_hosts) | set(nmap_hosts or []),
+        key=ipaddress.ip_address,
+    )
 
     with _PRE_SCAN_CACHE_LOCK:
         _PRE_SCAN_CACHE[network_cidr] = (time.monotonic(), list(open_hosts))
@@ -374,32 +401,58 @@ def _scan_goodwe_inverters_sync(
 
     broadcast_results = _scan_goodwe_broadcast_sync(timeout)
     arp = _read_arp_table()
-    discovered: dict[str, GoodweDiscoveryResult] = {}
+    discovered_by_host: dict[str, GoodweDiscoveryResult] = {}
 
-    # Broadcast responses are authoritative.  Enrich missing MAC addresses from
-    # ARP, which was deliberately populated by the pre-scan.
+    # The host is the primary key within one scan.  Previously broadcast results
+    # were keyed by MAC while TCP candidates were sometimes keyed by host.  The
+    # same inverter could therefore appear twice when ARP information was
+    # incomplete.
     for item in broadcast_results:
-        enriched = GoodweDiscoveryResult(
+        discovered_by_host[item.host] = GoodweDiscoveryResult(
             host=item.host,
             mac=item.mac or arp.get(item.host),
             name=item.name,
         )
-        discovered[enriched.mac or enriched.host] = enriched
 
     # A WLA dongle with Modbus/TCP may not answer the old UDP discovery packet.
     # Add TCP/502 candidates so the subsequent GoodWe protocol connection can
     # positively identify them and reject unrelated Modbus devices.
     for host in open_hosts:
-        mac = arp.get(host)
-        key = mac or host
-        if key not in discovered:
-            discovered[key] = GoodweDiscoveryResult(
+        if host in discovered_by_host:
+            continue
+        discovered_by_host[host] = GoodweDiscoveryResult(
+            host=host,
+            mac=arp.get(host),
+            name="Modbus/TCP candidate",
+        )
+
+    # Some UDP/8899 Wi-Fi kits do not answer WIFIKIT broadcast discovery,
+    # especially when another GoodWe dongle on the same subnet answers first.
+    # The subnet pre-scan deliberately populated the ARP table, so include every
+    # live ARP host inside the scanned network as a low-priority candidate.  The
+    # async protocol verification in config_flow.py positively identifies GoodWe
+    # devices and discards routers, printers and unrelated Modbus equipment.
+    if pre_scan_enabled and resolved_cidr:
+        network = ipaddress.ip_network(resolved_cidr, strict=False)
+        for host in sorted(arp, key=ipaddress.ip_address):
+            address = ipaddress.ip_address(host)
+            if address not in network or address in {
+                network.network_address,
+                network.broadcast_address,
+            }:
+                continue
+            if host in discovered_by_host:
+                continue
+            discovered_by_host[host] = GoodweDiscoveryResult(
                 host=host,
-                mac=mac,
-                name="Modbus/TCP candidate",
+                mac=arp.get(host),
+                name="ARP candidate",
             )
 
-    return list(discovered.values())
+    return sorted(
+        discovered_by_host.values(),
+        key=lambda item: ipaddress.ip_address(item.host),
+    )
 
 
 async def async_scan_goodwe_inverters(

@@ -3,7 +3,10 @@
     "abort": {
       "already_configured": "Device is already configured",
       "already_in_progress": "Configuration flow is already in progress",
-      "cannot_connect": "Failed to connect"
+      "cannot_connect": "Failed to connect",
+      "already_configured_inverter": "GoodWe inverter {serial} is already configured at {existing_host}. The address you just tried was {attempted_host}.",
+      "missing_serial": "The device responded but did not report a serial number.",
+      "identity_changed": "The device identity changed during setup. Run discovery again or enter the IP address manually."
     },
     "error": {
       "connection_error": "Failed to connect"
@@ -25,14 +28,14 @@
           "protocol": "Protocol",
           "model_family": "Inverter Family (optional)"
         },
-        "description": "No GoodWe inverter was discovered automatically, or you selected manual setup. Enter the inverter IP address.",
+        "description": "Enter the IP address of the additional GoodWe inverter. Each inverter is added as a separate device using its own serial number.",
         "title": "GoodWe inverter"
       },
       "select": {
         "data": {
           "discovered_inverter": "Discovered inverter"
         },
-        "description": "Select the GoodWe inverter to add.",
+        "description": "Select the not-yet-configured GoodWe inverter to add. Manual IP entry is always available.",
         "title": "Discovered GoodWe inverters"
       },
       "dhcp_confirm": {

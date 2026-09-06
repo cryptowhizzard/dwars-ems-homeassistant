@@ -18,7 +18,7 @@
   "requirements": [
     "goodwe==0.4.10"
   ],
-  "version": "0.9.9.32",
+  "version": "0.9.9.33",
   "dhcp": [
     {
       "hostname": "HF-*"
