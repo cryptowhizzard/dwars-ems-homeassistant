@@ -72,13 +72,53 @@ should_handle() {
   esac
 }
 
+resolve_supervisor_token() {
+  local token=""
+  local source=""
+  local candidate
+
+  if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+    token="${SUPERVISOR_TOKEN}"
+    source="SUPERVISOR_TOKEN"
+  elif [ -n "${HASSIO_TOKEN:-}" ]; then
+    token="${HASSIO_TOKEN}"
+    source="HASSIO_TOKEN (legacy)"
+  else
+    for candidate in \
+      /run/s6/container_environment/SUPERVISOR_TOKEN \
+      /run/s6/container_environment/HASSIO_TOKEN \
+      /var/run/s6/container_environment/SUPERVISOR_TOKEN \
+      /var/run/s6/container_environment/HASSIO_TOKEN; do
+      if [ -r "$candidate" ]; then
+        token="$(tr -d '\000\r\n' < "$candidate" 2>/dev/null || true)"
+        if [ -n "$token" ]; then
+          source="$candidate"
+          break
+        fi
+      fi
+    done
+  fi
+
+  if [ -n "$token" ]; then
+    export SUPERVISOR_TOKEN="$token"
+    # Houd legacy clients compatibel zonder de token ooit te loggen.
+    export HASSIO_TOKEN="${HASSIO_TOKEN:-$token}"
+    SUPERVISOR_TOKEN_SOURCE="$source"
+    export SUPERVISOR_TOKEN_SOURCE
+    return 0
+  fi
+
+  return 1
+}
+
 supervisor_curl() {
   local method="$1"
   local path="$2"
   local data="${3-}"
 
-  if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
-    fail "SUPERVISOR_TOKEN ontbreekt. Controleer hassio_api/homeassistant_api rechten in config.json."
+  if ! resolve_supervisor_token; then
+    log "Supervisor API-token ontbreekt (SUPERVISOR_TOKEN én HASSIO_TOKEN). API-actie ${method} ${path} wordt overgeslagen."
+    return 69
   fi
 
   if [ -n "$data" ]; then
@@ -97,7 +137,46 @@ supervisor_curl() {
   fi
 }
 
-try_supervisor_curl() {
+try_resolve_supervisor_token() {
+  local token=""
+  local source=""
+  local candidate
+
+  if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+    token="${SUPERVISOR_TOKEN}"
+    source="SUPERVISOR_TOKEN"
+  elif [ -n "${HASSIO_TOKEN:-}" ]; then
+    token="${HASSIO_TOKEN}"
+    source="HASSIO_TOKEN (legacy)"
+  else
+    for candidate in \
+      /run/s6/container_environment/SUPERVISOR_TOKEN \
+      /run/s6/container_environment/HASSIO_TOKEN \
+      /var/run/s6/container_environment/SUPERVISOR_TOKEN \
+      /var/run/s6/container_environment/HASSIO_TOKEN; do
+      if [ -r "$candidate" ]; then
+        token="$(tr -d '\000\r\n' < "$candidate" 2>/dev/null || true)"
+        if [ -n "$token" ]; then
+          source="$candidate"
+          break
+        fi
+      fi
+    done
+  fi
+
+  if [ -n "$token" ]; then
+    export SUPERVISOR_TOKEN="$token"
+    # Houd legacy clients compatibel zonder de token ooit te loggen.
+    export HASSIO_TOKEN="${HASSIO_TOKEN:-$token}"
+    SUPERVISOR_TOKEN_SOURCE="$source"
+    export SUPERVISOR_TOKEN_SOURCE
+    return 0
+  fi
+
+  return 1
+}
+
+supervisor_curl() {
   local method="$1"
   local path="$2"
   local data="${3-}"
@@ -1055,7 +1134,12 @@ start_auto_updater() {
   if [ -n "${AUTO_UPDATER_PID:-}" ] && kill -0 "$AUTO_UPDATER_PID" 2>/dev/null; then
     return 0
   fi
-  log "DWARS automatische updater 0.5.1 starten; dagelijks schema en hervatbare state staan in /data."
+  if resolve_supervisor_token; then
+    log "Supervisor API-auth beschikbaar via ${SUPERVISOR_TOKEN_SOURCE:-onbekende bron}; token wordt niet gelogd."
+  else
+    log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
+  fi
+  log "DWARS automatische updater 0.5.2 starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }

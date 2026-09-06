@@ -232,6 +232,47 @@ class JsonState:
         os.replace(temp, self.path)
 
 
+def resolve_supervisor_token() -> tuple[str, str]:
+    """Resolve Supervisor auth across current, legacy and S6 environments."""
+    for key in ("SUPERVISOR_TOKEN", "HASSIO_TOKEN"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return value, key
+
+    for filename in (
+        "/run/s6/container_environment/SUPERVISOR_TOKEN",
+        "/run/s6/container_environment/HASSIO_TOKEN",
+        "/var/run/s6/container_environment/SUPERVISOR_TOKEN",
+        "/var/run/s6/container_environment/HASSIO_TOKEN",
+    ):
+        try:
+            value = Path(filename).read_text(encoding="utf-8", errors="ignore").replace("\x00", "").strip()
+        except OSError:
+            continue
+        if value:
+            return value, filename
+    return "", ""
+
+
+def wait_for_supervisor_token(poll_seconds: int = 60) -> tuple[str, str]:
+    """Daemon-safe auth wait: never crash merely because token injection is late/missing."""
+    warned = False
+    while True:
+        token, source = resolve_supervisor_token()
+        if token:
+            if warned:
+                print(f"[DWARS AutoUpdater] Supervisor API-auth is beschikbaar via {source}; token wordt niet gelogd.", flush=True)
+            return token, source
+        if not warned:
+            print(
+                "[DWARS AutoUpdater] Supervisor API-token ontbreekt. "
+                "Ik blijf draaien en probeer SUPERVISOR_TOKEN, legacy HASSIO_TOKEN en S6 environment-files opnieuw.",
+                flush=True,
+            )
+            warned = True
+        time.sleep(max(5, poll_seconds))
+
+
 class ApiClient:
     def __init__(self, token: str, supervisor_url: str = DEFAULT_SUPERVISOR_URL) -> None:
         if not token:
@@ -1683,7 +1724,17 @@ def main() -> int:
     if args.show_state:
         print(json.dumps(state_store.load(), indent=2, sort_keys=True))
         return 0
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    token, token_source = resolve_supervisor_token()
+    if not token:
+        if args.daemon:
+            token, token_source = wait_for_supervisor_token(60)
+        else:
+            print(
+                "[DWARS AutoUpdater] Supervisor API-token ontbreekt: controleer hassio_api/homeassistant_api of gebruik een compatibele HASSIO_TOKEN-omgeving.",
+                file=sys.stderr,
+            )
+            return 69
+    print(f"[DWARS AutoUpdater] Supervisor API-auth via {token_source}; token wordt niet gelogd.", flush=True)
     client = ApiClient(token, args.supervisor_url)
     updater = AutoUpdater(Options(args.options), state_store, client, args.lock)
     if args.run_now:

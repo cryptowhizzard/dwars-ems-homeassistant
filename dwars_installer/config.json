@@ -1,8 +1,8 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "slug": "dwars_installer",
-  "description": "Beheert DWARS componenten en voert dagelijks een hervatbare volledige Home Assistant-update uit: backup, add-ons, HACS/update-entities, systeemplugins, Supervisor, OS/reboot en Core als laatste.",
+  "description": "Beheert DWARS componenten en voert dagelijks een hervatbare volledige Home Assistant-update uit. Compatibel met SUPERVISOR_TOKEN en legacy HASSIO_TOKEN; updater blijft actief als Supervisor-auth tijdelijk ontbreekt.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",
