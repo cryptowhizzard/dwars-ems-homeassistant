@@ -11,7 +11,8 @@ WORK_DIR="/tmp/dwars-installer"
 SUPERVISOR_API="${SUPERVISOR_API:-http://supervisor}"
 STATE_DIR="${STATE_DIR:-/data}"
 GOODWE_DEFAULTS_ONLY_MARKER="${GOODWE_DEFAULTS_ONLY_MARKER:-${HA_CONFIG_DIR}/.dwars_goodwe_defaults_only.json}"
-SYSTEM_UPDATES_APPLIED="false"
+MAINTENANCE_LOCK="${MAINTENANCE_LOCK:-${STATE_DIR}/dwars_maintenance.lock}"
+AUTO_UPDATER_PID=""
 
 log() {
   printf '[DWARS Installer] %s\n' "$*" >&2
@@ -176,7 +177,11 @@ download_repo_payload_source() {
 
 prepare_payload_source() {
   local remote_enabled remote_root
-  remote_enabled="$(get_bool auto_update_from_github false)"
+  if [ "$(get_bool fleet_managed_updates true)" = "true" ]; then
+    remote_enabled="true"
+  else
+    remote_enabled="$(get_bool auto_update_from_github true)"
+  fi
 
   mkdir -p "$LOCAL_PAYLOAD_DIR"
 
@@ -193,7 +198,7 @@ prepare_payload_source() {
   fi
 
   if [ "$remote_enabled" = "true" ]; then
-    log "auto_update_from_github=true; remote payload wordt gebruikt."
+    log "GitHub fleet updates zijn actief; de nieuwste remote payload wordt gebruikt."
   else
     log "Embedded payload ontbreekt of is incompleet; remote repo-ZIP wordt als fallback gebruikt."
   fi
@@ -1031,128 +1036,37 @@ restart_homeassistant_core() {
 }
 
 
-ha_curl() {
-  local method="$1"
-  local path="$2"
-  local data="${3-}"
-  if [ -z "${SUPERVISOR_TOKEN:-}" ]; then
-    log "SUPERVISOR_TOKEN ontbreekt; HA-updatecyclus wordt overgeslagen."
-    return 1
-  fi
-  if [ -n "$data" ]; then
-    curl -fsS -X "$method" -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" -d "$data" "http://supervisor/core/api${path}"
-  else
-    curl -fsS -X "$method" -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H "Content-Type: application/json" "http://supervisor/core/api${path}"
-  fi
-}
-
-is_upstream_goodwe_update_entity() {
-  local entity_json="$1"
-  local haystack
-  haystack="$(printf '%s' "$entity_json" | jq -r '[.entity_id, .state, (.attributes.friendly_name // ""), (.attributes.title // ""), (.attributes.installed_version // ""), (.attributes.latest_version // ""), (.attributes.release_url // ""), (.attributes.entity_picture // "")] | join(" ")' 2>/dev/null | tr '[:upper:]' '[:lower:]')"
-  case "$haystack" in
-    *goodwe*)
-      case "$haystack" in
-        *dwars*|*dcent*|*metdezon*|*cryptowhizzard*) return 1 ;;
-        *) return 0 ;;
-      esac
-      ;;
-  esac
-  return 1
-}
-
-install_ha_update_entities() {
-  [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
-  local states skip_goodwe backup entities entity_json entity_id
-  backup="$(get_bool auto_full_system_update_backup true)"
-  skip_goodwe="$(get_bool skip_upstream_goodwe_updates true)"
-  log "Home Assistant update-entities controleren."
-  states="$(ha_curl GET /states 2>/dev/null || true)"
-  [ -n "$states" ] || { log "Kon /api/states niet lezen; HA update-entities overgeslagen."; return 0; }
-  entities="$(printf '%s' "$states" | jq -c '.[] | select(.entity_id|startswith("update.")) | select(.state == "on")')"
-  [ -n "$entities" ] || { log "Geen HA update-entities met state=on."; return 0; }
-  while IFS= read -r entity_json; do
-    [ -n "$entity_json" ] || continue
-    entity_id="$(printf '%s' "$entity_json" | jq -r '.entity_id')"
-    if [ "$skip_goodwe" = "true" ] && is_upstream_goodwe_update_entity "$entity_json"; then
-      log "${entity_id}: upstream/originele GoodWe update overgeslagen; DWARS-versie blijft leidend."
-      continue
+run_install_cycle_locked() {
+  mkdir -p "$STATE_DIR"
+  (
+    if ! flock -w 300 9; then
+      log "Install/update cycle uitgesteld: automatische systeemupdate houdt de onderhoudslock bezet."
+      return 0
     fi
-    log "${entity_id}: update.install uitvoeren."
-    if ha_curl POST /services/update/install "$(jq -n --arg e "$entity_id" --argjson backup "$backup" '{entity_id:$e, backup:$backup}')" >/dev/null; then
-      SYSTEM_UPDATES_APPLIED="true"
-    else
-      log "${entity_id}: update.install faalde."
-    fi
-    sleep 5
-  done <<< "$entities"
+    run_install_cycle
+  ) 9>"$MAINTENANCE_LOCK"
 }
 
-update_all_installed_addons() {
-  [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
-  local backup addons slug update_available name
-  backup="$(get_bool addon_update_backup false)"
-  addons="$(supervisor_curl GET /addons 2>/dev/null || true)"
-  [ -n "$addons" ] || return 0
-  while IFS=$'\t' read -r slug name update_available; do
-    [ -n "$slug" ] || continue
-    if [ "$update_available" = "true" ]; then
-      log "Add-on ${name} (${slug}) updaten."
-      if supervisor_curl POST "/store/addons/${slug}/update" "$(jq -n --argjson backup "$backup" '{backup:$backup, background:false}')" >/dev/null; then
-        SYSTEM_UPDATES_APPLIED="true"
-        supervisor_curl POST "/addons/${slug}/restart" '{}' >/dev/null || true
-      else
-        log "Add-on ${name} (${slug}) update faalde."
-      fi
-    fi
-  done < <(printf '%s' "$addons" | jq -r '(.addons // .data.addons // [])[] | select(.installed == true) | [.slug, (.name // .slug), (.update_available // false)] | @tsv')
-}
-
-supervisor_update_if_available() {
-  local info_path="$1"
-  local update_path="$2"
-  local label="$3"
-  local info update_available
-  info="$(supervisor_curl GET "$info_path" 2>/dev/null || true)"
-  if [ -z "$info" ]; then
-    log "${label}: info niet beschikbaar; update overgeslagen."
+start_auto_updater() {
+  [ "$(get_bool auto_full_system_update true)" = "true" ] || {
+    log "Volledige automatische systeemupdates zijn uitgeschakeld."
+    return 0
+  }
+  if [ -n "${AUTO_UPDATER_PID:-}" ] && kill -0 "$AUTO_UPDATER_PID" 2>/dev/null; then
     return 0
   fi
-  update_available="$(printf '%s' "$info" | jq -r '(.data.update_available // .update_available // false)' 2>/dev/null || echo false)"
-  if [ "$update_available" != "true" ]; then
-    log "${label}: geen update beschikbaar."
-    return 0
-  fi
-  log "${label}: update beschikbaar; update uitvoeren."
-  if supervisor_curl POST "$update_path" '{}' >/dev/null; then
-    SYSTEM_UPDATES_APPLIED="true"
-  else
-    log "${label}: update faalde."
+  log "DWARS automatische updater 0.5.1 starten; dagelijks schema en hervatbare state staan in /data."
+  python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
+  AUTO_UPDATER_PID=$!
+}
+
+stop_auto_updater() {
+  if [ -n "${AUTO_UPDATER_PID:-}" ] && kill -0 "$AUTO_UPDATER_PID" 2>/dev/null; then
+    kill "$AUTO_UPDATER_PID" 2>/dev/null || true
+    wait "$AUTO_UPDATER_PID" 2>/dev/null || true
   fi
 }
 
-update_supervisor_core_os_best_effort() {
-  [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
-  log "Supervisor/Core/OS updates controleren."
-  supervisor_update_if_available /supervisor/info /supervisor/update "Supervisor"
-  supervisor_update_if_available /core/info /core/update "Home Assistant Core"
-  supervisor_update_if_available /os/info /os/update "Home Assistant OS"
-}
-
-run_full_system_update_cycle() {
-  [ "$(get_bool auto_full_system_update true)" = "true" ] || return 0
-  SYSTEM_UPDATES_APPLIED="false"
-  log "Volledige automatische updatecyclus gestart."
-  install_ha_update_entities || true
-  update_all_installed_addons || true
-  update_supervisor_core_os_best_effort || true
-  if [ "$SYSTEM_UPDATES_APPLIED" = "true" ] && [ "$(get_bool auto_full_system_update_reboot true)" = "true" ]; then
-    log "Minimaal één update toegepast; host reboot aanvragen."
-    try_supervisor_curl POST /host/reboot '{}' >/dev/null
-  else
-    log "Geen toegepaste updates of reboot uitgeschakeld; geen host reboot."
-  fi
-}
 
 run_install_cycle() {
   local components_changed="false"
@@ -1186,30 +1100,43 @@ run_install_cycle() {
 
 main() {
   [ -f "$CONFIG_PATH" ] || fail "Geen ${CONFIG_PATH} gevonden."
+  mkdir -p "$STATE_DIR"
+  trap stop_auto_updater EXIT INT TERM
 
   log "Start install/update cycle: inverter_type=$(selected_inverter_type)"
-  run_install_cycle
-  run_full_system_update_cycle || true
-  log "Install/update cycle klaar."
+  if run_install_cycle_locked; then
+    log "Initiële DWARS install/update cycle klaar."
+  else
+    # Een tijdelijke GitHub-/Store-storing mag de dagelijkse Core, Supervisor,
+    # OS en add-on updater niet uitschakelen. De periodieke componentcyclus
+    # probeert dit later opnieuw.
+    log "Initiële DWARS componentcyclus gaf een fout; systeemupdater start wel en de componentcyclus probeert later opnieuw."
+  fi
 
-  if [ "$(get_bool watch_for_embedded_updates true)" = "true" ] || [ "$(get_bool auto_update_from_github false)" = "true" ] || [ "$(get_bool auto_full_system_update true)" = "true" ]; then
-    local interval full_interval last_full now_ts
+  start_auto_updater
+
+  if [ "$(get_bool watch_for_embedded_updates true)" = "true" ]     || [ "$(get_bool auto_update_from_github true)" = "true" ]     || [ "$(get_bool fleet_managed_updates true)" = "true" ]     || [ "$(get_bool auto_full_system_update true)" = "true" ]; then
+    local interval
     interval="$(get_opt update_check_interval_sec 900)"
-    full_interval="$(get_opt auto_full_system_update_interval_sec 21600)"
-    last_full="$(date +%s)"
-    log "Updater blijft actief: repo/add-ons iedere ${interval}s, volledige systeemupdates iedere ${full_interval}s."
+    case "$interval" in ''|*[!0-9]*) interval=900 ;; esac
+    [ "$interval" -ge 60 ] || interval=60
+    log "Updater blijft actief: DWARS/GitHub-componentcontrole iedere ${interval}s; volledige systeemupdate volgens dagelijks schema in auto_updater.py."
     while true; do
       sleep "$interval"
-      run_install_cycle || log "Update cycle gaf een fout; volgende interval probeert opnieuw."
-      now_ts="$(date +%s)"
-      if [ $((now_ts - last_full)) -ge "$full_interval" ]; then
-        run_full_system_update_cycle || true
-        last_full="$now_ts"
+      if [ "$(get_bool watch_for_embedded_updates true)" = "true" ]         || [ "$(get_bool auto_update_from_github true)" = "true" ]         || [ "$(get_bool fleet_managed_updates true)" = "true" ]; then
+        run_install_cycle_locked || log "DWARS component-update gaf een fout; volgende interval probeert opnieuw."
+      fi
+      if [ "$(get_bool auto_full_system_update true)" = "true" ]; then
+        if [ -z "${AUTO_UPDATER_PID:-}" ] || ! kill -0 "$AUTO_UPDATER_PID" 2>/dev/null; then
+          log "Automatische updater draait niet meer; proces wordt opnieuw gestart."
+          AUTO_UPDATER_PID=""
+          start_auto_updater
+        fi
       fi
     done
   fi
 
-  log "Updater loop staat uit; add-on blijft in idle mode actief."
+  log "Alle updaterloops staan uit; add-on blijft in idle mode actief."
   while true; do sleep 86400; done
 }
 
