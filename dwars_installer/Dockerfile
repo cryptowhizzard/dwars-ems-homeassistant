@@ -29,6 +29,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 COPY run.sh /app/run.sh
 COPY auto_updater.py /app/auto_updater.py
+COPY core_recovery.py /app/core_recovery.py
 RUN mkdir -p /app/payload \
   && chmod +x /app/run.sh /app/auto_updater.py
 

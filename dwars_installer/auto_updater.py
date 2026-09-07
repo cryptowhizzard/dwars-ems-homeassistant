@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from core_recovery import CoreRecovery, core_config_ready
+
 VERSION = "0.5.3"
 STATE_VERSION = 2
 DEFAULT_STATE_PATH = "/data/dwars_auto_update_state.json"
@@ -53,7 +55,6 @@ STAGES = (
     "os_wait_reboot",
     "core",
     "verify",
-    "core_recovery",
 )
 
 
@@ -333,11 +334,13 @@ class ApiClient:
         *,
         timeout: int = 60,
     ) -> Any:
-        response = self._request(self.supervisor_url, method, path, data, timeout=timeout)
-        if isinstance(response, dict) and response.get("result") == "error":
-            # Some older proxies return an error envelope with HTTP 200.
-            raise ApiError(f"{method} {path}: {response.get('message', 'Supervisor wees actie af')}", status=200)
-        return response
+        result = self._request(self.supervisor_url, method, path, data, timeout=timeout)
+        if isinstance(result, dict) and result.get("result") == "error":
+            raise ApiError(
+                f"{method} {path}: {result.get('message', 'Supervisor error')}",
+                body=json.dumps(result),
+            )
+        return result
 
     def ha(
         self,
@@ -363,38 +366,12 @@ class ApiClient:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                ready, _ = probe_core_ready(self)
-                if ready:
+                if core_config_ready(self.ha("GET", "/config", timeout=20)):
                     return True
+                time.sleep(interval)
             except ApiError:
-                pass
-            time.sleep(interval)
+                time.sleep(interval)
         return False
-
-
-def probe_core_ready(client: Any) -> tuple[bool, str]:
-    """Check the real Core API, including startup and offline DB migration state."""
-    try:
-        state = client.ha("GET", "/core/state", timeout=15)
-    except ApiError as exc:
-        if exc.status != 404:
-            raise
-        # Compatibility for Core versions without /api/core/state.
-        state = None
-    if state is not None:
-        if not isinstance(state, dict) or not isinstance(state.get("state"), str):
-            return False, "Core API gaf geen geldige runtime-state"
-        recorder = state.get("recorder_state") or {}
-        if isinstance(recorder, dict) and recorder.get("migration_in_progress") and not recorder.get("migration_is_live"):
-            return False, "Core voert een offline databasemigratie uit; niet onderbreken"
-        if state["state"].upper() != "RUNNING":
-            return False, f"Core is {state['state']}; opstarten/afsluiten wordt niet onderbroken"
-    config = client.ha("GET", "/config", timeout=15)
-    if not isinstance(config, dict) or not isinstance(config.get("version"), str) or not isinstance(config.get("components"), list):
-        return False, "Core /api/config is nog niet beschikbaar of ongeldig"
-    if config.get("safe_mode"):
-        return False, "Core draait in safe mode; niet als volledig hersteld beschouwen"
-    return True, f"Core RUNNING; /api/config bereikbaar (versie {config['version']})"
 
 
 @dataclass(frozen=True)
@@ -444,6 +421,10 @@ class AutoUpdater:
         self.state = self.state_store.load()
         self._timezone: ZoneInfo | None = None
         self._host_name: str | None = None
+        self._startup_core_check_pending = True
+        self.core_recovery = CoreRecovery(
+            options, client, self.state_store.path.with_name("dwars_core_recovery_state.json"), log
+        )
 
     # ---------- generic state and reporting ----------
 
@@ -506,13 +487,12 @@ class AutoUpdater:
             "updated_at": self.state.get("updated_at"),
             "last_completed_at": self.state.get("last_completed_at"),
             "last_result": self.state.get("last_result"),
-            "core_health": self.state.get("core_health"),
-            "core_recovery": self.state.get("core_recovery"),
             "next_run": self.state.get("next_run"),
             "success_count": len(self.state.get("successes") or []),
             "failure_count": len([f for f in (self.state.get("failures") or []) if f.get("final", True)]),
             "backup": self.state.get("backup"),
             "current_item": self.state.get("current_item"),
+            "core_health": self.state.get("core_health"),
         }
         try:
             self.client.ha("POST", f"/states/{STATUS_ENTITY}", {"state": stage, "attributes": attrs}, timeout=15)
@@ -982,196 +962,33 @@ class AutoUpdater:
             time.sleep(10)
         return False, f"timeout na {timeout}s; {last}"
 
-    def core_jobs_busy(self) -> bool:
-        """Fail closed on unreadable jobs; never start Core during backup/restore/update."""
-        info = self.system_info("/jobs/info")
-        jobs = info.get("jobs")
-        if not isinstance(jobs, list):
-            raise ApiError("Supervisor /jobs/info mist een geldige jobs-lijst")
-        def active(items: list[Any]) -> bool:
-            for item in items:
-                if not isinstance(item, dict):
-                    raise ApiError("Ongeldige Supervisor job")
-                name = str(item.get("name", "")).lower()
-                affects_core = any(word in name for word in (
-                    "home_assistant", "homeassistant", "backup", "restore",
-                    "migration", "supervisor_update", "os_manager", "host_control",
-                    "host_reboot", "host_shutdown", "core_sys",
-                ))
-                if item.get("done") is not True and affects_core:
-                    return True
-                children = item.get("child_jobs", [])
-                if isinstance(children, list) and active(children):
-                    return True
-            return False
-        return active(jobs)
-
-    def ensure_core_running(self, context: str = "controle") -> tuple[bool, str]:
-        """Bounded, persisted start-only recovery. Caller must hold maintenance_lock.
-
-        /core/start is idempotent, but is only requested for a confirmed stopped
-        container and with no conflicting jobs. Never stop, force, rebuild or
-        reboot here. A running container doing a migration must be left alone.
-        """
-        timeout = self.options.integer("auto_core_recovery_timeout_sec", 900, minimum=60, maximum=7200)
-        enabled = self.options.bool("auto_core_recovery_enabled", True)
-        record = self.state.get("core_recovery")
-        if not isinstance(record, dict) or not record.get("pending"):
-            record = {"pending": True, "attempts": 0, "started_at": iso_now()}
-        record["context"] = context
-        self.state["core_recovery"] = record
+    def ensure_core_available(self, context: str, timeout: int | None = None) -> tuple[bool, str]:
+        if timeout is None:
+            timeout = self.options.integer(
+                "auto_full_system_update_core_recovery_timeout_sec", 900, minimum=120, maximum=7200
+            )
+        self.core_recovery.options = self.options
+        ok, detail = self.core_recovery.ensure(context, timeout)
+        self.state["core_health"] = dict(self.core_recovery.state)
         self.save()
-        deadline = time.monotonic() + timeout
-        last = "Corestatus onbekend"
-        settings_checked = False
-        reported, reported_at = "", -60.0
-        def report_wait(message: str) -> None:
-            nonlocal reported, reported_at
-            now = time.monotonic()
-            if message != reported or now - reported_at >= 60:
-                record["detail"] = message
-                self.state["core_health"] = "waiting"
-                self.save()
-                log(f"Core-controle ({context}): {message}.")
-                reported, reported_at = message, now
-        while time.monotonic() < deadline:
-            try:
-                if self.core_jobs_busy():
-                    last = "Supervisor heeft nog een Core-/backup-/restore-/systeemtaak; wachten"
-                    report_wait(last)
-                    time.sleep(10)
-                    continue
-                info = self.system_info("/core/info")
-                if not settings_checked and enabled and self.options.bool("auto_core_boot_watchdog", True):
-                    changes = {key: True for key in ("boot", "watchdog") if info.get(key) is False}
-                    if changes:
-                        self.client.supervisor("POST", "/core/options", changes, timeout=30)
-                        log("Core automatisch opstarten/watchdog ingeschakeld; overige Core-opties blijven behouden.")
-                    settings_checked = True
-                try:
-                    ready, last = probe_core_ready(self.client)
-                except ApiError as exc:
-                    if exc.status in {401, 403}:
-                        raise
-                    ready, last = False, compact_exception(exc)
-                if ready:
-                    record.update({"pending": False, "ready_at": iso_now(), "detail": last})
-                    record.pop("last_error", None)
-                    self.state["core_health"] = "running"
-                    self.save()
-                    log(f"Core-controle ({context}): {last}.")
-                    return True, last
-
-                # Successful stats imply a live container, even while its HTTP
-                # API is not ready. A generic HTTP error is NOT proof of a stop.
-                stopped = False
-                try:
-                    self.client.supervisor("GET", "/core/stats", timeout=15)
-                except ApiError as exc:
-                    if exc.status in {401, 403}:
-                        raise
-                    error = (str(exc) + " " + exc.body).lower()
-                    stopped = exc.status in {200, 400, 404, 409, 500} and any(text in error for text in (
-                        "not running", "not started", "homeassistantnotrunning", "homeassistant_not_running", "home_assistant_not_running",
-                        "container homeassistant does not exist", "container homeassistant not found",
-                    ))
-                if enabled and stopped:
-                    attempts = to_int(record.get("attempts"), 0)
-                    requested = parse_iso(record.get("last_start_requested_at"))
-                    due = requested is None or (utc_now() - requested).total_seconds() >= 120
-                    if attempts >= 3:
-                        last = "Core blijft gestopt na 3 startpogingen; geen herstartlus. Controleer ha core logs"
-                        break
-                    if due:
-                        # Recheck jobs immediately before a write; keep Supervisor's
-                        # own job concurrency protections enabled (no force flags).
-                        if self.core_jobs_busy():
-                            time.sleep(10)
-                            continue
-                        record["attempts"] = attempts + 1
-                        record["last_start_requested_at"] = iso_now()
-                        self.save()  # survives killing this process mid-request
-                        log(f"Core is gestopt ({context}); POST /core/start, poging {attempts + 1}/3.")
-                        try:
-                            self.client.supervisor("POST", "/core/start", {}, timeout=60)
-                        except ApiError as exc:
-                            if exc.status in {401, 403}:
-                                raise
-                            last = f"Core start nog niet bevestigd: {compact_exception(exc)}"
-                elif not enabled:
-                    last = "Core niet gereed; auto_core_recovery_enabled=false, geen startactie"
-                    break
-            except ApiError as exc:
-                last = compact_exception(exc)
-                if exc.status in {401, 403}:
-                    # Credentials/permissions cannot be fixed by restarting Core.
-                    break
-            report_wait(last)
-            time.sleep(10)
-        record.update({"pending": True, "last_error": last, "checked_at": iso_now()})
-        self.state["core_health"] = "unavailable"
-        self.save()
-        log(f"Core-controle ({context}) NIET geslaagd: {last}.")
-        return False, last
-
-    def defer_core_recovery(self, resume_stage: str, detail: str) -> None:
-        self.state.update({
-            "active": True, "stage": "core_recovery", "current_item": None,
-            "core_recovery_resume_stage": resume_stage,
-        })
-        self.save()
-        log(f"Updatecyclus wacht op Core-herstel; vervolg={resume_stage}: {detail}")
-
-    def require_core_running(self, context: str) -> None:
-        ok, detail = self.ensure_core_running(context)
-        if not ok:
-            resume = str(self.state.get("stage") or "verify")
-            self.defer_core_recovery(resume, detail)
-            raise PauseRun(detail)
-
-    def run_core_recovery_stage(self) -> None:
-        ok, detail = self.ensure_core_running("hervatten na onderbreking")
-        if not ok:
-            raise PauseRun(detail)
-        resume = self.state.pop("core_recovery_resume_stage", "verify")
-        if resume not in STAGES or resume == "core_recovery":
-            resume = "failed" if resume == "failed" else "scheduled"
-            self.state["active"] = False
-        self.set_stage(resume, "Core is hersteld; updatecyclus hervat.")
-
-    def startup_core_check(self) -> None:
-        """One readiness/recovery pass at daemon start, not a perpetual watchdog."""
-        if not self.options.bool("auto_full_system_update", True):
-            return
-        with self.maintenance_lock(wait_seconds=10):
-            self.state = self.state_store.load()
-            if self.state.get("active"):
-                # In particular, do not race a queued HAOS reboot/restore.
-                return
-            ok, detail = self.ensure_core_running("start DWARS updater")
-            if not ok:
-                self.defer_core_recovery("scheduled", detail)
+        return ok, detail
 
     def restart_core_and_wait(self) -> tuple[bool, str]:
-        # Configuration is checked before a deliberate restart. No forced/safe
-        # mode restart: bad YAML or an offline migration must not be masked.
-        try:
-            ready, _ = probe_core_ready(self.client)
-        except ApiError:
-            ready = False
-        if not ready:
-            # Starting a stopped Core already loads the new components.
-            return self.ensure_core_running("Core ontbreekt bij componentupdate")
-        if self.core_jobs_busy():
-            return False, "Core-herstart uitgesteld: Supervisor-taak actief"
-        try:
-            self.client.supervisor("POST", "/core/check", {}, timeout=600)
-            self.client.supervisor("POST", "/core/restart", {}, timeout=60)
-        except ApiError as exc:
-            if not api_error_may_be_interrupted_update(exc):
-                return False, compact_exception(exc)
-            log(f"Core restart-call werd onderbroken: {compact_exception(exc)}")
-        return self.ensure_core_running("na Core-herstart")
+        # A stopped Core needs start, not a blind restart. Arm before issuing
+        # any mutation so the daemon can recover after an interrupted call.
+        self.core_recovery.enforce_boot_policy()
+        self.core_recovery.arm("Core-herstart na componentupdate")
+        if self.core_recovery.healthy():
+            try:
+                self.client.supervisor("POST", "/core/restart", {}, timeout=60)
+            except ApiError as exc:
+                if not api_error_may_be_interrupted_update(exc):
+                    # Still check health: failure of a restart call is not
+                    # evidence that Core is stopped (e.g. migration lock).
+                    self.ensure_core_available("controle na geweigerde herstart")
+                    return False, compact_exception(exc)
+                log(f"Core restart-call werd onderbroken: {compact_exception(exc)}")
+        return self.ensure_core_available("controle na Core-herstart")
 
     def system_info(self, path: str) -> dict[str, Any]:
         value = unwrap(self.client.supervisor("GET", path, timeout=60))
@@ -1190,12 +1007,14 @@ class AutoUpdater:
         before = self.system_info(info_path)
         if not to_bool(before.get("update_available"), False):
             if wait_for_ha:
-                ok, detail = self.ensure_core_running("Core al actueel")
+                ok, detail = self.ensure_core_available("Core-versie al actueel: controleer ook beschikbaarheid")
                 return ok, False, f"reeds actueel ({before.get('version', '')}); {detail}"
             return True, False, f"reeds actueel ({before.get('version', '')})"
         old_version = str(before.get("version") or "")
         target = str(before.get("version_latest") or "latest")
         timeout = self.options.integer("auto_full_system_update_system_timeout_sec", 3600, minimum=300, maximum=14400)
+        if wait_for_ha:
+            self.core_recovery.arm("Core-update")
         try:
             self.client.supervisor("POST", update_path, payload or {}, timeout=timeout)
         except ApiError as exc:
@@ -1208,8 +1027,8 @@ class AutoUpdater:
         if not self.client.wait_supervisor(timeout, interval=10):
             return False, True, f"Supervisor niet bereikbaar binnen {timeout}s"
         if wait_for_ha:
-            ok, detail = self.ensure_core_running("na Core-update")
-            if not ok:
+            ready, detail = self.ensure_core_available("na Core-update")
+            if not ready:
                 return False, True, detail
         deadline = time.monotonic() + timeout
         last = ""
@@ -1276,7 +1095,12 @@ class AutoUpdater:
         return pending, errors
 
     def run_preflight_stage(self) -> None:
-        self.require_core_running("vóór updatecyclus")
+        self.core_recovery.enforce_boot_policy()
+        ready, detail = self.ensure_core_available("voorcontrole systeemupdate")
+        if not ready:
+            self.add_failure("core_availability", detail)
+            self.set_stage("verify", "Core niet beschikbaar; geen nieuwe updateacties starten.")
+            return
         self.append_log("Voorcontrole: beschikbare add-on-, HACS-, systeem- en Core-updates inventariseren.")
         errors = self.refresh_update_catalogs()
         try:
@@ -1423,7 +1247,6 @@ class AutoUpdater:
         self.add_failure(item, reason, final=False)
 
     def run_addons_stage(self) -> None:
-        self.require_core_running("na backup, vóór add-onupdates")
         if "addon_queue" not in self.state:
             queue = self.discover_addons()
             self._save_queue("addon_queue", queue)
@@ -1447,7 +1270,6 @@ class AutoUpdater:
         self.set_stage("entities", "Add-onfase gereed; HACS, custom integrations en overige update-entities volgen.")
 
     def run_entities_stage(self) -> None:
-        self.require_core_running("na add-onupdates, vóór HACS")
         if "entity_queue" not in self.state:
             queue = self.discover_entity_updates()
             self._save_queue("entity_queue", queue)
@@ -1489,7 +1311,6 @@ class AutoUpdater:
         self.set_stage("retry", "Retryfase voor mislukte add-on- en update-entityupdates gestart.")
 
     def run_retry_stage(self) -> None:
-        self.require_core_running("vóór retryfase")
         raw_queue = self.state.get("retry_queue") or []
         max_retries = self.options.integer("auto_full_system_update_max_retries", 2, minimum=0, maximum=5)
         delay = self.options.integer("auto_full_system_update_retry_delay_sec", 120, minimum=5, maximum=1800)
@@ -1711,7 +1532,12 @@ class AutoUpdater:
         raise PauseRun("hostreboot nog niet bevestigd")
 
     def run_core_stage(self) -> None:
-        self.require_core_running("na systeemupdate/reboot, vóór Corefase")
+        self.core_recovery.enforce_boot_policy()
+        ready, detail = self.ensure_core_available("voor Core-check/update, ook na hostreboot")
+        if not ready:
+            self.add_failure("core_availability", detail)
+            self.set_stage("verify", "Core niet beschikbaar; configuratiecheck/update uitgesteld.")
+            return
         if self.options.bool("auto_full_system_update_core_check", True):
             self.append_log("Home Assistant configuratiecontrole uitvoeren vóór Core-update.")
             try:
@@ -1766,7 +1592,9 @@ class AutoUpdater:
         return pending
 
     def run_verify_stage(self) -> None:
-        self.require_core_running("eindcontrole")
+        ready, detail = self.ensure_core_available("eindcontrole systeemupdate")
+        if not ready:
+            self.add_failure("core_availability", detail)
         pending = self.pending_updates()
         self.state["pending_after_verify"] = pending
         final_failures = [f for f in (self.state.get("failures") or []) if f.get("final", True)]
@@ -1827,8 +1655,6 @@ class AutoUpdater:
                 self.run_core_stage()
             elif stage == "verify":
                 self.run_verify_stage()
-            elif stage == "core_recovery":
-                self.run_core_recovery_stage()
             else:
                 raise RuntimeError(f"Kan actieve run niet hervatten vanaf stage={stage!r}")
 
@@ -1853,6 +1679,10 @@ class AutoUpdater:
         try:
             with self.maintenance_lock(wait_seconds=10):
                 self.state = self.state_store.load()
+                self.core_recovery = CoreRecovery(
+                    self.options, self.client,
+                    self.state_store.path.with_name("dwars_core_recovery_state.json"), log
+                )
                 if not self.state.get("active"):
                     self.new_run(reason)
                 self.execute_active_run()
@@ -1884,22 +1714,39 @@ class AutoUpdater:
             except Exception:
                 self.state["next_run"] = (utc_now() + dt.timedelta(days=1)).isoformat(timespec="seconds")
             self.save()
-            try:
-                with self.maintenance_lock(wait_seconds=10):
-                    ok, recovery_detail = self.ensure_core_running("na afgebroken updatecyclus")
-                    if not ok:
-                        self.defer_core_recovery("failed", recovery_detail)
-            except (ApiError, TimeoutError) as recovery_error:
-                log(f"Core-nacontrole uitgesteld: {compact_exception(recovery_error)}")
             self.final_notification()
             self.publish_status()
             return False
 
-    def daemon(self) -> None:
+    def recover_core_outside_run(self, *, startup: bool = False) -> None:
+        startup = startup or self._startup_core_check_pending
+        if not self.options.bool("auto_full_system_update", True):
+            return
         try:
-            self.startup_core_check()
-        except (ApiError, TimeoutError) as exc:
-            log(f"Core-opstartcontrole uitgesteld: {compact_exception(exc)}")
+            with self.maintenance_lock(wait_seconds=1):
+                self.state = self.state_store.load()
+                if self.state.get("active"):
+                    return  # active stage machine owns recovery, especially OS reboot
+                self.core_recovery = CoreRecovery(
+                    self.options, self.client,
+                    self.state_store.path.with_name("dwars_core_recovery_state.json"), log
+                )
+                if startup:
+                    self.core_recovery.enforce_boot_policy()
+                    self.ensure_core_available("start DWARS updater / herstel vorige run")
+                    self._startup_core_check_pending = False
+                elif self.core_recovery.state.get("pending"):
+                    self.ensure_core_available("hervat eerder Core-herstel", timeout=0)
+                else:
+                    return  # do not turn this into a permanent stop-overriding watchdog
+                self.publish_status()
+        except TimeoutError:
+            pass  # installer holds lock; retry on the next scheduler tick
+        except ApiError as exc:
+            log(f"Core-herstel uitgesteld: {compact_exception(exc)}")
+
+    def daemon(self) -> None:
+        self.recover_core_outside_run(startup=True)
         self.initialize_schedule()
         poll = self.options.integer("auto_full_system_update_scheduler_poll_sec", 60, minimum=15, maximum=900)
         log(
@@ -1909,6 +1756,8 @@ class AutoUpdater:
         )
         while True:
             self.options = Options(str(self.options.path))
+            self.core_recovery.options = self.options
+            self.recover_core_outside_run()
             self.state = self.state_store.load()
             if not self.options.bool("auto_full_system_update", True):
                 self.state.update({"active": False, "stage": "scheduled", "last_result": "disabled"})
@@ -1948,9 +1797,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--daemon", action="store_true", help="run the persistent scheduler")
     group.add_argument("--run-now", action="store_true", help="start or resume a run immediately")
     group.add_argument("--show-state", action="store_true", help="print persisted state")
-    group.add_argument("--ensure-core", action="store_true", help="check/start Core without running updates")
-    group.add_argument("--restart-core", action="store_true", help="checked restart plus readiness verification")
-    parser.add_argument("--lock-held", action="store_true", help="internal: parent run.sh already holds maintenance lock")
+    group.add_argument("--ensure-core", action="store_true", help="only check/start Core, do not update")
+    group.add_argument("--restart-core", action="store_true", help="restart/start Core after component changes")
+    parser.add_argument("--lock-held", action="store_true", help="internal: caller already holds maintenance lock")
     parser.add_argument("--options", default=DEFAULT_OPTIONS_PATH)
     parser.add_argument("--state", default=DEFAULT_STATE_PATH)
     parser.add_argument("--lock", default=DEFAULT_LOCK_PATH)
@@ -1981,12 +1830,16 @@ def main() -> int:
         lock = contextlib.nullcontext() if args.lock_held else updater.maintenance_lock(wait_seconds=10)
         try:
             with lock:
-                ok, detail = updater.restart_core_and_wait() if args.restart_core else updater.ensure_core_running("handmatige controle")
+                updater.core_recovery.enforce_boot_policy()
+                ok, detail = (
+                    updater.restart_core_and_wait() if args.restart_core
+                    else updater.ensure_core_available("gerichte Core-controle")
+                )
                 log(detail)
                 return 0 if ok else 1
-        except (ApiError, TimeoutError) as exc:
-            log(compact_exception(exc))
-            return 1
+        except TimeoutError:
+            log("Core-actie uitgesteld: onderhoudslock bezet.")
+            return 75
     if args.run_now:
         return 0 if updater.run_once("manual") else 1
     updater.daemon()

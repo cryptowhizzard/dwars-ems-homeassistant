@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / "auto_updater.py"
 spec = importlib.util.spec_from_file_location("dwars_auto_updater", MODULE_PATH)
 assert spec and spec.loader
@@ -42,10 +44,6 @@ class FakeClient:
 
     def supervisor(self, method, path, data=None, timeout=60):
         self.calls.append(("supervisor", method, path, data))
-        if path == "/jobs/info":
-            return {"data": {"jobs": []}}
-        if path == "/core/stats":
-            return {"data": {"cpu_percent": 1}}
         if path == "/host/info":
             return {"data": {"hostname": "test-pi", "timezone": "Europe/Amsterdam", "boot_timestamp": self.boot_timestamp}}
         if path == "/os/info":
@@ -86,10 +84,8 @@ class FakeClient:
 
     def ha(self, method, path, data=None, timeout=60):
         self.calls.append(("ha", method, path, data))
-        if path == "/core/state":
-            return {"state": "RUNNING", "recorder_state": {"migration_in_progress": False}}
         if path == "/config":
-            return {"time_zone": "Europe/Amsterdam", "version": "2026.9.0", "components": ["api", "frontend"]}
+            return {"time_zone": "Europe/Amsterdam", "version": "2026.8.3", "state": "RUNNING"}
         if path == "/states":
             return list(self.states)
         if path.startswith("/states/update."):
