@@ -28,7 +28,7 @@ get_opt() {
   local default="${2-}"
   jq -r --arg k "$key" --arg d "$default" '
     def root: if ((.options? | type) == "object") and (has("inverter_type") | not) then .options else . end;
-    (root[$k] // null) as $v
+    (root[$k]) as $v
     | if $v == null then $d
       elif ($v | type) == "object" or ($v | type) == "array" then $d
       elif ($v | type) == "boolean" then (if $v then "true" else "false" end)
@@ -1111,7 +1111,10 @@ install_or_configure_agents() {
 
 restart_homeassistant_core() {
   log "Home Assistant Core herstarten zodat custom_components opnieuw geladen worden."
-  supervisor_curl POST /core/restart '{}' >/dev/null
+  python3 -u /app/auto_updater.py \
+    --restart-core --lock-held --options "$CONFIG_PATH" \
+    --state "${STATE_DIR}/dwars_auto_update_state.json" --lock "$MAINTENANCE_LOCK" \
+    --supervisor-url "$SUPERVISOR_API"
 }
 
 
@@ -1120,6 +1123,11 @@ run_install_cycle_locked() {
   (
     if ! flock -w 300 9; then
       log "Install/update cycle uitgesteld: automatische systeemupdate houdt de onderhoudslock bezet."
+      return 0
+    fi
+    if [ -f "${STATE_DIR}/dwars_auto_update_state.json" ] && \
+       jq -e '.active == true' "${STATE_DIR}/dwars_auto_update_state.json" >/dev/null 2>&1; then
+      log "Componentcyclus uitgesteld: systeemupdate/Core-herstel moet eerst hervatten."
       return 0
     fi
     run_install_cycle
@@ -1139,7 +1147,7 @@ start_auto_updater() {
   else
     log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
   fi
-  log "DWARS automatische updater 0.5.2 starten; dagelijks schema en hervatbare state staan in /data."
+  log "DWARS automatische updater 0.5.3 starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }
@@ -1171,10 +1179,19 @@ run_install_cycle() {
     fi
   fi
 
-  install_or_configure_agents "$source_root"
-
+  # Persist the restart intent before an add-on store error or self-update can interrupt us.
   if [ "$components_changed" = "true" ] && [ "$(get_bool restart_homeassistant_after_custom_component true)" = "true" ]; then
-    restart_homeassistant_core
+    touch "${STATE_DIR}/dwars_core_restart_required"
+  fi
+  install_or_configure_agents "$source_root" || log "Agentcyclus gaf een fout; vereiste Core-nacontrole wordt wel uitgevoerd."
+
+  if [ -f "${STATE_DIR}/dwars_core_restart_required" ] && [ "$(get_bool restart_homeassistant_after_custom_component true)" = "true" ]; then
+    if restart_homeassistant_core; then
+      rm -f "${STATE_DIR}/dwars_core_restart_required"
+    else
+      log "Core nog niet gereed; restart-marker blijft bewaard voor de volgende componentcyclus."
+      return 1
+    fi
   elif [ "$components_changed" = "true" ]; then
     log "Custom components zijn bijgewerkt, maar Home Assistant restart is overgeslagen. Herstart handmatig om de update te laden."
   else

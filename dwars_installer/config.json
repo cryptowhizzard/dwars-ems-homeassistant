@@ -1,8 +1,8 @@
 {
   "name": "DWARS Installer & Updater",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "slug": "dwars_installer",
-  "description": "Beheert DWARS componenten en voert dagelijks een hervatbare volledige Home Assistant-update uit. Compatibel met SUPERVISOR_TOKEN en legacy HASSIO_TOKEN; updater blijft actief als Supervisor-auth tijdelijk ontbreekt.",
+  "description": "DWARS fleet-updater met gecontroleerd Core-herstel na updates, reboot en componentherstart; afronden pas na controle van de Core API.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",
@@ -126,7 +126,10 @@
     "auto_full_system_update_core_check": true,
     "auto_full_system_update_notify": true,
     "auto_full_system_update_first_start_catchup_until": "10:00",
-    "auto_full_system_update_reboot_timeout_sec": 1800
+    "auto_full_system_update_reboot_timeout_sec": 1800,
+    "auto_core_recovery_enabled": true,
+    "auto_core_recovery_timeout_sec": 900,
+    "auto_core_boot_watchdog": true
   },
   "schema": {
     "inverter_type": "list(goodwe|solaredge|both|andere_omvormer)",
@@ -235,7 +238,10 @@
     "auto_full_system_update_core_check": "bool",
     "auto_full_system_update_notify": "bool",
     "auto_full_system_update_first_start_catchup_until": "str",
-    "auto_full_system_update_reboot_timeout_sec": "int"
+    "auto_full_system_update_reboot_timeout_sec": "int",
+    "auto_core_recovery_enabled": "bool",
+    "auto_core_recovery_timeout_sec": "int",
+    "auto_core_boot_watchdog": "bool"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",

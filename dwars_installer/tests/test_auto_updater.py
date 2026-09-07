@@ -42,6 +42,10 @@ class FakeClient:
 
     def supervisor(self, method, path, data=None, timeout=60):
         self.calls.append(("supervisor", method, path, data))
+        if path == "/jobs/info":
+            return {"data": {"jobs": []}}
+        if path == "/core/stats":
+            return {"data": {"cpu_percent": 1}}
         if path == "/host/info":
             return {"data": {"hostname": "test-pi", "timezone": "Europe/Amsterdam", "boot_timestamp": self.boot_timestamp}}
         if path == "/os/info":
@@ -82,8 +86,10 @@ class FakeClient:
 
     def ha(self, method, path, data=None, timeout=60):
         self.calls.append(("ha", method, path, data))
+        if path == "/core/state":
+            return {"state": "RUNNING", "recorder_state": {"migration_in_progress": False}}
         if path == "/config":
-            return {"time_zone": "Europe/Amsterdam"}
+            return {"time_zone": "Europe/Amsterdam", "version": "2026.9.0", "components": ["api", "frontend"]}
         if path == "/states":
             return list(self.states)
         if path.startswith("/states/update."):
