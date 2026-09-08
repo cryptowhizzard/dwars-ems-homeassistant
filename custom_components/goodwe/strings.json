@@ -41,7 +41,29 @@
       "dhcp_confirm": {
         "description": "GoodWe inverter discovered at {host} with MAC {mac}. Add this inverter?",
         "title": "Add discovered GoodWe inverter"
+      },
+      "scan": {
+        "title": "Scanning the GoodWe network"
+      },
+      "no_devices": {
+        "title": "No new GoodWe inverter found",
+        "description": "No unconfigured inverter with a valid GoodWe serial was found. The log shows the interface address, subnet, and open ports. Scan again or enter an address manually.",
+        "menu_options": {
+          "scan": "Scan again",
+          "manual": "Enter IP address manually"
+        }
+      },
+      "scan_failed": {
+        "title": "Network discovery failed",
+        "description": "The scan did not complete: {error}. This does not mean there are no inverters.",
+        "menu_options": {
+          "scan": "Try again",
+          "manual": "Enter IP address manually"
+        }
       }
+    },
+    "progress": {
+      "scan_network": "Reading the current Ethernet address and subnet mask, scanning TCP/502, and identifying GoodWe serial numbers. This may take a few minutes. Results appear here when the scan finishes."
     }
   },
   "entity": {
@@ -149,7 +171,7 @@
           "default_area": "Default area/room",
           "auto_load_control": "Enable load control automatically",
           "pre_scan_enabled": "Pre-scan the local network before discovery",
-          "network_cidr": "Network to pre-scan (CIDR, e.g. 192.168.2.0/24)"
+          "network_cidr": "Additional scan network (CIDR); empty = automatic Ethernet/DHCP"
         }
       }
     }

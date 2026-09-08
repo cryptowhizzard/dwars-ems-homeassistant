@@ -53,9 +53,12 @@ from .discovery import (
     resolve_network_cidr,
 )
 
+from .network_discovery import DiscoveryNetworkError
+
 PROTOCOL_CHOICES = ["UDP", "TCP"]
 DISCOVERED_INVERTER = "discovered_inverter"
 MANUAL_DISCOVERY_VALUE = "__manual__"
+RESCAN_DISCOVERY_VALUE = "__rescan__"
 
 MANUAL_SCHEMA = vol.Schema(
     {
@@ -180,6 +183,8 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         self._discovered_inverters: dict[str, GoodweDiscoveryResult] = {}
         self._pending_entry_data: dict[str, Any] | None = None
         self._pending_title: str | None = None
+        self._discovery_task: asyncio.Task | None = None
+        self._scan_error: str = ""
 
     @staticmethod
     @callback
@@ -271,12 +276,51 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return await self.async_step_manual(user_input)
 
-        self._discovered_inverters = await self._async_discover_unconfigured()
+        return await self.async_step_scan()
 
-        if self._discovered_inverters:
-            return await self.async_step_select()
+    async def async_step_scan(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Run discovery in a managed progress task, not in a long HTTP request."""
+        if self._discovery_task is None:
+            self._scan_error = ""
+            self._discovery_task = self.hass.async_create_task(
+                self._async_discover_unconfigured()
+            )
+            # Always register the task with the flow manager, even if eager
+            # execution completed it immediately. HA handles cancel/removal.
+            return self.async_show_progress(
+                step_id="scan", progress_action="scan_network",
+                progress_task=self._discovery_task,
+            )
+        if not self._discovery_task.done():
+            return self.async_show_progress(
+                step_id="scan", progress_action="scan_network",
+                progress_task=self._discovery_task,
+            )
+        try:
+            self._discovered_inverters = self._discovery_task.result()
+        except DiscoveryNetworkError as err:
+            self._scan_error = str(err)
+            _LOGGER.warning("GoodWe network detection failed: %s", err)
+        except Exception as err:
+            self._scan_error = str(err)
+            _LOGGER.exception("GoodWe discovery failed (not a no-devices result)")
+        finally:
+            self._discovery_task = None
+        next_step = "scan_failed" if self._scan_error else (
+            "select" if self._discovered_inverters else "no_devices"
+        )
+        return self.async_show_progress_done(next_step_id=next_step)
 
-        return await self.async_step_manual()
+    async def async_step_no_devices(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """No new serials: offer a fresh scan and manual entry, never auto-select an old unit."""
+        return self.async_show_menu(step_id="no_devices", menu_options=["scan", "manual"])
+
+    async def async_step_scan_failed(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Explain network/scan failure separately from a successful empty scan."""
+        return self.async_show_menu(
+            step_id="scan_failed", menu_options=["scan", "manual"],
+            description_placeholders={"error": self._scan_error},
+        )
 
     async def async_step_select(
         self, user_input: dict[str, Any] | None = None
@@ -286,6 +330,8 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             selected = user_input[DISCOVERED_INVERTER]
             if selected == MANUAL_DISCOVERY_VALUE:
                 return await self.async_step_manual()
+            if selected == RESCAN_DISCOVERY_VALUE or selected not in self._discovered_inverters:
+                return await self.async_step_scan()
             return await self._async_create_from_discovery(
                 self._discovered_inverters[selected]
             )
@@ -294,6 +340,7 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             key: result.label for key, result in self._discovered_inverters.items()
         }
         options[MANUAL_DISCOVERY_VALUE] = "Manual IP address"
+        options[RESCAN_DISCOVERY_VALUE] = "Scan again (refresh Ethernet/DHCP)"
 
         return self.async_show_form(
             step_id="select",
@@ -449,78 +496,45 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         return None
 
     async def _async_scan_networks(self) -> list[GoodweDiscoveryResult]:
-        """Scan the local subnet(s), seeded by already configured inverter IPs."""
-        _serials, configured_hosts, _macs = self._configured_identity_sets()
-        scopes: list[tuple[str | None, str | None]] = []
-        seen_cidrs: set[str] = set()
-
-        for host in sorted(configured_hosts):
-            cidr = resolve_network_cidr(None, host)
-            if cidr and cidr not in seen_cidrs:
-                seen_cidrs.add(cidr)
-                scopes.append((cidr, host))
-
-        # Usually all inverters are in one subnet.  Bound the number of scans in
-        # case stale entries from many historic networks still exist.
-        if not scopes:
-            scopes = [(None, None)]
-        else:
-            scopes = scopes[:4]
-
-        scan_results = await asyncio.gather(
-            *(
-                async_scan_goodwe_inverters(
-                    self.hass,
-                    pre_scan_enabled=DEFAULT_PRE_SCAN_ENABLED,
-                    network_cidr=cidr,
-                    preferred_host=host,
-                )
-                for cidr, host in scopes
-            ),
-            return_exceptions=True,
+        """Scan actual Ethernet scopes, independent of historic inverter entries."""
+        return await async_scan_goodwe_inverters(
+            self.hass, pre_scan_enabled=DEFAULT_PRE_SCAN_ENABLED, force=True,
         )
-
-        merged: dict[str, GoodweDiscoveryResult] = {}
-        for result_set in scan_results:
-            if isinstance(result_set, Exception):
-                _LOGGER.warning("GoodWe network scan failed: %s", result_set)
-                continue
-            for result in result_set:
-                current = merged.get(result.host)
-                if current is None:
-                    merged[result.host] = result
-                    continue
-                merged[result.host] = GoodweDiscoveryResult(
-                    host=result.host,
-                    mac=current.mac or result.mac,
-                    name=current.name or result.name,
-                )
-
-        return list(merged.values())
 
     async def _async_verify_candidate(
         self, result: GoodweDiscoveryResult
     ) -> GoodweDiscoveryResult | None:
         """Positively identify one scan candidate and read its serial number."""
-        preferred_protocol = (
+        preferred_protocol = result.protocol or (
             "TCP" if result.name == "Modbus/TCP candidate" else "UDP"
         )
-        try:
-            inverter, port, protocol = await asyncio.wait_for(
-                async_connect_and_detect_port(
-                    host=result.host,
-                    protocol=preferred_protocol,
-                    timeout=1,
-                    retries=1,
-                ),
-                timeout=6,
-            )
-        except (InverterError, TimeoutError) as err:
-            _LOGGER.debug(
-                "Ignoring scan candidate %s; it is not a reachable GoodWe inverter: %s",
-                result.host,
-                err,
-            )
+        # A 6s timeout around BOTH transports could cancel TCP identification
+        # before the library finished probing the inverter families. Give each
+        # transport its own budget and preserve the observed open TCP/502 hint.
+        inverter = None
+        for candidate_protocol in (preferred_protocol, "UDP" if preferred_protocol == "TCP" else "TCP"):
+            candidate_port = 502 if candidate_protocol == "TCP" else 8899
+            try:
+                inverter, port, protocol = await asyncio.wait_for(
+                    async_connect_and_detect_port(
+                        host=result.host, protocol=candidate_protocol, port=candidate_port,
+                        timeout=2, retries=1,
+                    ),
+                    timeout=45,
+                )
+                break
+            except (InverterError, TimeoutError, OSError, ValueError) as err:
+                _LOGGER.debug(
+                    "GoodWe identification failed: %s %s/%s: %s",
+                    result.host, candidate_protocol, candidate_port, err,
+                )
+        if inverter is None:
+            if result.protocol == "TCP" or result.name == "Modbus/TCP candidate":
+                _LOGGER.warning(
+                    "GoodWe discovery: TCP/502 is open at %s but no GoodWe identity "
+                    "could be read via TCP/UDP; not adding an unverified Modbus device",
+                    result.host,
+                )
             return None
 
         serial_number = str(
@@ -533,6 +547,10 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             )
             return None
 
+        _LOGGER.info(
+            "GoodWe identified: host=%s serial=%s model=%s protocol=%s/%s",
+            result.host, serial_number, getattr(inverter, "model_name", ""), protocol, port,
+        )
         return GoodweDiscoveryResult(
             host=result.host,
             mac=result.mac,
@@ -565,7 +583,7 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             sorted(configured_serials),
         )
 
-        probe_semaphore = asyncio.Semaphore(32)
+        probe_semaphore = asyncio.Semaphore(16)
 
         async def _bounded_verify(
             result: GoodweDiscoveryResult,
@@ -573,6 +591,12 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             async with probe_semaphore:
                 return await self._async_verify_candidate(result)
 
+        # Probe positive TCP candidates first, then UDP broadcasts, then ARP-only
+        # hosts. Identity still comes from the GoodWe serial, never from TCP/502.
+        results.sort(key=lambda result: (
+            0 if result.protocol == "TCP" else 2 if result.name == "ARP candidate" else 1,
+            ipaddress.ip_address(result.host),
+        ))
         verified_results = await asyncio.gather(
             *(_bounded_verify(result) for result in results),
             return_exceptions=True,

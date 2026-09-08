@@ -41,7 +41,29 @@
       "dhcp_confirm": {
         "description": "GoodWe-omvormer gevonden op {host} met MAC-adres {mac}. Deze omvormer toevoegen?",
         "title": "Gevonden GoodWe-omvormer toevoegen"
+      },
+      "scan": {
+        "title": "GoodWe-netwerk zoeken"
+      },
+      "no_devices": {
+        "title": "Geen nieuwe GoodWe-omvormer gevonden",
+        "description": "Er is geen nog niet toegevoegde omvormer met een geldig GoodWe-serienummer gevonden. De log toont het gebruikte interface-adres, subnet en de open poorten. Je kunt opnieuw scannen of een adres handmatig invoeren.",
+        "menu_options": {
+          "scan": "Opnieuw scannen",
+          "manual": "IP-adres handmatig invoeren"
+        }
+      },
+      "scan_failed": {
+        "title": "Netwerkdetectie niet voltooid",
+        "description": "De scan is niet voltooid: {error}. Dit betekent niet dat er geen omvormers zijn.",
+        "menu_options": {
+          "scan": "Opnieuw proberen",
+          "manual": "IP-adres handmatig invoeren"
+        }
       }
+    },
+    "progress": {
+      "scan_network": "Het actuele Ethernet-adres en subnetmasker bepalen, poort 502 scannen en GoodWe-serienummers uitlezen. Dit kan enkele minuten duren. De gevonden omvormers verschijnen hier zodra de scan klaar is."
     }
   },
   "entity": {
@@ -149,7 +171,7 @@
           "default_area": "Standaardruimte",
           "auto_load_control": "Load control automatisch inschakelen",
           "pre_scan_enabled": "Lokaal netwerk vóór detectie scannen",
-          "network_cidr": "Te scannen netwerk (CIDR, bijvoorbeeld 192.168.2.0/24)"
+          "network_cidr": "Extra scannetwerk (CIDR); leeg = automatisch via Ethernet/DHCP"
         }
       }
     }
