@@ -1,16 +1,16 @@
 {
   "release_date": "2026-09-08",
-  "installer_version": "0.6.0",
+  "installer_version": "0.6.2",
   "protocol_version": 1,
-  "python_tests_passed": 103,
-  "php_targeted_checks_passed": 475,
-  "syntax": {
-    "php": 124,
-    "shell": 8,
-    "python": 51,
-    "json": 31
-  },
+  "python_tests_passed": 154,
+  "new_regression_tests": 28,
+  "test_transport": "local HTTP/WebSocket contract doubles; real Bash/curl/aiohttp and OneShot worker",
   "hardware_tested": false,
+  "real_supervisor_tested": false,
+  "arm_docker_build_tested": false,
   "live_database_tested": false,
-  "baseline_smoke_failures": 2
+  "ems_bms_changed": false,
+  "php_retested_this_release": false,
+  "server_packages_required": "EMS/BMS OneShot 20260908 + migrations/20260908_oneshot.php",
+  "report": "ONESHOT_HERSTEL_0.6.2.md"
 }

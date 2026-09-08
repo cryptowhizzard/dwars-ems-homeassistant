@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 DOMAIN = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi", "other": None}
 AGENT = {"goodwe": "goodwe_agent", "solaredge": "solaredge_agent", "other": "dwars_addon"}
 
@@ -98,20 +98,37 @@ def validate_profile(profile):
     return {**profile, "hosts": hosts, "unit_ids": units}
 
 
-def choose_mode_details(options: dict, data: Path) -> tuple[str, str]:
-    """Choose conservatively without mistaking updater leftovers for onboarding.
+LEGACY_KEY_FIELDS = ("goodwe_agent_api_key", "solaredge_agent_api_key", "dwars_addon_api_key")
 
-    A payload hash or a scheduler state proves only that an updater ran, not
-    that the customer or any inverter/agent was successfully configured.
-    Explicit manual mode and legacy customer keys retain their protection.
+
+def legacy_api_key(options: dict) -> str:
+    """One unique customer key may be reused; never guess between customers."""
+    keys = set()
+    for name in LEGACY_KEY_FIELDS:
+        value = options.get(name, "")
+        if value in (None, ""):
+            continue
+        if not isinstance(value, str) or not 8 <= len(value.strip()) <= 512 or any(ord(c) < 32 for c in value):
+            raise Blocked("Een bestaande API-key heeft een ongeldig formaat. Voer de juiste key in via de webinterface.")
+        keys.add(value.strip())
+    if len(keys) > 1:
+        raise Blocked("Meerdere verschillende klantkeys in de oude configuratie. Kies de klant via de API-key in de webinterface; niets automatisch gewijzigd.")
+    return next(iter(keys), "")
+
+
+def choose_mode_details(options: dict, data: Path) -> tuple[str, str]:
+    """An API key is input to onboarding, not evidence that onboarding succeeded.
+
+    The async read-only probe protects actual existing installations. Updater
+    leftovers and a key alone must never select the legacy installer.
     """
     requested = options.get("installation_mode", "auto")
     if requested in {"manual", "oneshot"}:
         return requested, "installation_mode staat expliciet op " + requested + "."
     if (data / "oneshot_state.json").exists() or (data / "oneshot_credentials.json").exists():
         return "oneshot", "Opgeslagen OneShot-voortgang of API-key gevonden; installatie hervatten."
-    if any(options.get(k) for k in ("goodwe_agent_api_key", "solaredge_agent_api_key", "dwars_addon_api_key")):
-        return "manual", "Bestaande agent-API-key in de configuratie; niet automatisch omgezet naar OneShot."
+    if any(options.get(k) for k in LEGACY_KEY_FIELDS):
+        return "oneshot", "API-key gevonden; controleren of de omvormer al is ingericht, anders OneShot automatisch starten."
     return "oneshot", "Geen bestaande klantkoppeling gevonden; OneShot is beschikbaar."
 
 

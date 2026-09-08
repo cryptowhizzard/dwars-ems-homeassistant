@@ -112,29 +112,35 @@ resolve_supervisor_token() {
 }
 
 supervisor_curl() {
-  local method="$1"
-  local path="$2"
-  local data="${3-}"
-
+  local method="$1" path="$2" data="${3-}"
+  local body status rc=0 message secret
   if ! resolve_supervisor_token; then
-    log "Supervisor API-token ontbreekt (SUPERVISOR_TOKEN én HASSIO_TOKEN). API-actie ${method} ${path} wordt overgeslagen."
+    log "Supervisor API-token ontbreekt. API-actie ${method} ${path} is niet uitgevoerd."
     return 69
   fi
-
-  if [ -n "$data" ]; then
-    curl -fsS \
-      -X "$method" \
-      -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d "$data" \
-      "${SUPERVISOR_API}${path}"
-  else
-    curl -fsS \
-      -X "$method" \
-      -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
-      -H "Content-Type: application/json" \
-      "${SUPERVISOR_API}${path}"
+  body="$(mktemp)" || return 1
+  local -a args=(-sS --connect-timeout 15 --max-time 1800 -o "$body" -w '%{http_code}'
+    -X "$method" -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" -H 'Content-Type: application/json')
+  [ -z "$data" ] || args+=(-d "$data")
+  status="$(curl "${args[@]}" "${SUPERVISOR_API}${path}")" || rc=$?
+  if [ "$rc" -ne 0 ] || [[ ! "$status" =~ ^2[0-9][0-9]$ ]]       || jq -e '.result == "error"' "$body" >/dev/null 2>&1; then
+    message="$(jq -r '(.message // .error // "Geen nadere JSON-foutmelding") | if type == "string" then . else "API-fout" end' "$body" 2>/dev/null || echo 'Antwoord niet als JSON leesbaar')"
+    message="${message//"$SUPERVISOR_TOKEN"/[afgeschermd]}"
+    # Schema errors can echo rejected values. Never log customer/HA keys.
+    while IFS= read -r secret; do
+      [ -z "$secret" ] || message="${message//"$secret"/[afgeschermd]}"
+    done < <({ if [ -n "$data" ]; then printf '%s' "$data"; else printf '{}'; fi; } | jq -r '.. | objects | to_entries[] | select(.key | test("(^|_)(api_key|token)$")) | .value | select(type == "string" and length > 0)' 2>/dev/null)
+    for secret in goodwe_agent_api_key solaredge_agent_api_key dwars_addon_api_key; do
+      secret="$(get_opt "$secret" '')"
+      [ -z "$secret" ] || message="${message//"$secret"/[afgeschermd]}"
+    done
+    log "API-fout: ${method} ${path}: HTTP ${status:-000}; ${message:0:500}"
+    rm -f "$body"
+    [ "$rc" -ne 0 ] && return "$rc"
+    return 22
   fi
+  cat "$body"
+  rm -f "$body"
 }
 
 try_supervisor_curl() {
@@ -492,7 +498,7 @@ extract_goodwe_secret_recursive() {
 
 validate_goodwe_stored_options() {
   local addon_slug="$1" response valid message
-  response="$(supervisor_curl POST "/addons/${addon_slug}/options/validate")"
+  response="$(supervisor_curl POST "/addons/${addon_slug}/options/validate" '{}')"
   valid="$(printf '%s' "$response" | jq -r '(.data.valid // .valid // true) | tostring' 2>/dev/null || printf true)"
   if [ "$valid" != "true" ]; then
     message="$(printf '%s' "$response" | jq -r '(.data.message // .message // "onbekende validatiefout")' 2>/dev/null || true)"
@@ -765,7 +771,7 @@ set_addon_boot_auto_update() {
   local label="$2"
   if [ "$(get_bool enable_addon_auto_update true)" = "true" ]; then
     log "${label}: boot=auto en auto_update=true instellen."
-    supervisor_curl POST "/addons/${addon_slug}/options" '{"boot":"auto","auto_update":true}' >/dev/null || true
+    supervisor_curl POST "/addons/${addon_slug}/options" '{"boot":"auto","auto_update":true}' >/dev/null || return 1
   fi
 }
 
@@ -916,6 +922,29 @@ configure_goodwe_agent() {
   fi
 }
 
+save_complete_agent_options() {
+  local addon_slug="$1" desired="$2" current payload
+  current="$(supervisor_curl GET "/addons/${addon_slug}/info")" || return 1
+  # Supervisor validates the submitted options AS A WHOLE, before saving.
+  # Keep required defaults (e.g. backup_yaml_*) and installed-version settings.
+  payload="$(jq -cn --argjson info "$current" --argjson desired "$desired" '
+    ($info.data.options // $info.options // {}) as $old
+    | $desired + {options: ($old + $desired.options
+        | if (.api_key // "") == "" and ($old.api_key // "") != "" then .api_key = $old.api_key else . end)}
+  ')" || return 1
+  supervisor_curl POST "/addons/${addon_slug}/options" "$payload" >/dev/null || return 1
+}
+
+validate_agent_options() {
+  local addon_slug="$1" response message
+  response="$(supervisor_curl POST "/addons/${addon_slug}/options/validate" '{}')" || return 1
+  if ! printf '%s' "$response" | jq -e '(.data.valid // .valid) == true' >/dev/null; then
+    # Do not print schema input values (may contain customer secrets).
+    log "${addon_slug}: opgeslagen agentconfiguratie is ongeldig; agent wordt niet gestart."
+    return 1
+  fi
+}
+
 configure_solaredge_agent() {
   local addon_slug="$1"
   [ "$(get_bool configure_agent_addons true)" = "true" ] || return 0
@@ -977,8 +1006,8 @@ configure_solaredge_agent() {
       }
     }')"
 
-  log "SolarEdge Agent configureren."
-  supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+  log "SolarEdge Agent configureren met volledige options-map."
+  save_complete_agent_options "$addon_slug" "$options_payload" || return 1
 }
 
 configure_dwars_addon() {
@@ -1053,20 +1082,23 @@ configure_dwars_addon() {
       }
     }')"
 
-  log "DWARS Generic EMS Add-on configureren."
-  supervisor_curl POST "/addons/${addon_slug}/options" "$options_payload" >/dev/null
+  log "DWARS Generic EMS Add-on configureren met volledige options-map."
+  save_complete_agent_options "$addon_slug" "$options_payload" || return 1
 }
 
 start_addon_if_requested() {
-  local addon_slug="$1"
-  local label="$2"
+  local addon_slug="$1" label="$2" info
   if [ "$(get_bool start_agent_addons false)" = "true" ]; then
     log "${label}: starten."
-    supervisor_curl POST "/addons/${addon_slug}/start" '{}' >/dev/null \
-      || supervisor_curl POST "/addons/${addon_slug}/restart" '{}' >/dev/null \
-      || true
+    supervisor_curl POST "/addons/${addon_slug}/start" '{}' >/dev/null || return 1
+    info="$(supervisor_curl GET "/addons/${addon_slug}/info")" || return 1
+    if [ "$(json_field "$info" state '')" != "started" ]; then
+      log "${label}: Supervisor bevestigt geen draaiende agent."
+      return 1
+    fi
+    log "${label}: gestart, bevestigd door Supervisor."
   else
-    log "${label}: geïnstalleerd/geconfigureerd maar niet gestart. Zet start_agent_addons=true als de entities al bestaan."
+    log "${label}: door deze onderhoudsroute niet gestart (start_agent_addons=false). Dit is geen automatische omvormer-onboarding."
   fi
 }
 
@@ -1079,47 +1111,41 @@ configure_installer_self_update() {
   fi
 }
 
+configure_and_start_agent() {
+  local slug="$1" label="$2" configure="$3"
+  # Explicit return checks are essential: this function runs inside an `if` / ||
+  # chain, where Bash disables errexit even in nested function calls.
+  "$configure" "$slug" || { log "${label}: configuratie MISLUKT; niet gestart."; return 1; }
+  if [ "$(get_bool configure_agent_addons true)" = "true" ]       || [ "$(get_bool start_agent_addons false)" = "true" ]; then
+    validate_agent_options "$slug" || return 1
+  fi
+  set_addon_boot_auto_update "$slug" "$label" || return 1
+  start_addon_if_requested "$slug" "$label" || return 1
+}
+
 install_or_configure_agents() {
-  local source_root="${1-}"
-  local agents_failed="false"
+  local source_root="${1-}" agents_failed="false" goodwe_slug se_slug dwars_slug
   [ "$(get_bool install_agent_addons true)" = "true" ] || return 0
-  ensure_store_reloaded
-  configure_installer_self_update
-
+  ensure_store_reloaded || return 1
+  configure_installer_self_update || return 1
   if should_handle goodwe; then
-    local goodwe_slug
-    goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent / BMS' "$source_root" || true)"
-    if [ -n "$goodwe_slug" ]; then
-      set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent / BMS"
-      configure_goodwe_agent "$goodwe_slug"
-      start_addon_if_requested "$goodwe_slug" "GoodWe Agent / BMS"
+    if goodwe_slug="$(ensure_addon_installed goodwe_agent 'GoodWe Agent / BMS' "$source_root")"         && [ -n "$goodwe_slug" ]; then
+      configure_and_start_agent "$goodwe_slug" 'GoodWe Agent / BMS' configure_goodwe_agent || agents_failed="true"
     else
       agents_failed="true"
     fi
   fi
-
   if should_handle solaredge; then
-    local se_slug
-    se_slug="$(ensure_addon_installed solaredge_agent 'SolarEdge Agent / BMS' "$source_root" || true)"
-    if [ -z "$se_slug" ]; then
-      se_slug="$(ensure_addon_installed metdezon_bms_agent 'SolarEdge Agent / BMS' "$source_root" || true)"
-    fi
+    se_slug="$(ensure_addon_installed solaredge_agent 'SolarEdge Agent / BMS' "$source_root")" || se_slug=""
     if [ -n "$se_slug" ]; then
-      set_addon_boot_auto_update "$se_slug" "SolarEdge Agent / BMS"
-      configure_solaredge_agent "$se_slug"
-      start_addon_if_requested "$se_slug" "SolarEdge Agent / BMS"
+      configure_and_start_agent "$se_slug" 'SolarEdge Agent / BMS' configure_solaredge_agent || agents_failed="true"
     else
       agents_failed="true"
     fi
   fi
-
   if should_handle other; then
-    local dwars_slug
-    dwars_slug="$(ensure_addon_installed dwars_addon 'DWARS Generic EMS Add-on' "$source_root" || true)"
-    if [ -n "$dwars_slug" ]; then
-      set_addon_boot_auto_update "$dwars_slug" "DWARS Generic EMS Add-on"
-      configure_dwars_addon "$dwars_slug"
-      start_addon_if_requested "$dwars_slug" "DWARS Generic EMS Add-on"
+    if dwars_slug="$(ensure_addon_installed dwars_addon 'DWARS Generic EMS Add-on' "$source_root")"         && [ -n "$dwars_slug" ]; then
+      configure_and_start_agent "$dwars_slug" 'DWARS Generic EMS Add-on' configure_dwars_addon || agents_failed="true"
     else
       agents_failed="true"
     fi
@@ -1163,7 +1189,7 @@ start_auto_updater() {
   else
     log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
   fi
-  log "DWARS automatische updater (OneShot 0.6.1) starten; dagelijks schema en hervatbare state staan in /data."
+  log "DWARS automatische updater (OneShot 0.6.2) starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }
@@ -1180,7 +1206,7 @@ run_install_cycle() {
   local components_changed="false"
   local agents_failed="false"
   local source_root
-  source_root="$(prepare_payload_source)"
+  source_root="$(prepare_payload_source)" || return 1
 
   if [ "$(get_bool install_custom_components true)" = "true" ]; then
     if [ "$(get_bool manage_oneshot_bridge false)" = "true" ] && [ -d "${source_root}/custom_components/dwars_setup" ]; then
@@ -1204,7 +1230,7 @@ run_install_cycle() {
   install_or_configure_agents "$source_root" || agents_failed="true"
 
   if [ "$components_changed" = "true" ] && [ "$(get_bool restart_homeassistant_after_custom_component true)" = "true" ]; then
-    restart_homeassistant_core
+    restart_homeassistant_core || return 1
   elif [ "$components_changed" = "true" ]; then
     log "Custom components zijn bijgewerkt, maar Home Assistant restart is overgeslagen. Herstart handmatig om de update te laden."
   else

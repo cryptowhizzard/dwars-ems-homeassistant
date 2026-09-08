@@ -1,8 +1,12 @@
-# DWARS OneShot 0.6.1
+# DWARS OneShot 0.6.2
 
-Nieuwe installatie: start de app, open de webinterface en voer de DWARS API-key in. BMS en EMS moeten eerst zijn bijgewerkt en de migratie moet zijn uitgevoerd. Laat `installation_mode: auto` staan op een nieuwe Raspberry. Geen langlevend HA-token nodig. Voortgang en key blijven bij een herstart bewaard.
+Open de webinterface en voer de DWARS API-key in. BMS en EMS moeten eerst de OneShot-serverupdate en migratie hebben. Er is geen long-lived HA-token nodig. Key en voortgang blijven bij een herstart bewaard.
 
-Een bestaande geconfigureerde installatie blijft in auto-modus de handmatige updater gebruiken. Alleen oude updaterbestanden zijn niet langer voldoende om OneShot te blokkeren. Bij `mode=manual`: zet voor automatische onboarding `installation_mode` op `oneshot`, sla op en herstart deze app; open daarna de webinterface. Verwijder de app of zijn `/data` niet. Zie `ONESHOT_HERSTEL_0.6.1.md` voor deze correctie. De volledige uitrolhandleiding en grenzen staan in `ONESHOT_INSTALLATIE.md` in de repositoryroot. Deze versie eerst op een test-Raspberry controleren.
+Op een onafgeronde auto-installatie wordt één API-key uit de bestaande installeropties hergebruikt: de key alleen schakelt OneShot niet meer uit. Een actieve of al ingerichte oude installatie blijft beschermd. Daar kun je op dezelfde webpagina **Start met opgeslagen API-key** gebruiken, zonder `installation_mode` in YAML te wijzigen. Kies tussen verschillende oude klantkeys niet automatisch; de webinterface laat dan de juiste key invoeren.
+
+Bij de startsituatie uit het 0.6.1-foutlog (gestopte agents, key aanwezig, geen omvormerconfiguratie) begint OneShot automatisch. Het platform komt uit BMS. De agent start na gecontroleerde sensorkoppeling; `start_agent_addons: false` is een oude onderhoudsoptie, geen blokkade voor OneShot. De ongebruikte gestopte agent zonder key wordt niet verwijderd maar start niet meer automatisch op een latere reboot.
+
+**Update de app zelf naar 0.6.2.** Alleen de repositoryinhoud ophalen of de app herstarten vervangt de ingebouwde Python-code niet. Wis geen instellingen of `/data`. Volledige herstel- en testinformatie: `ONESHOT_HERSTEL_0.6.2.md` in de repositoryroot. Eerst op één Raspberry bevestigen; geen fysieke Raspberry-/omvormertest is hier uitgevoerd.
 
 ## Bestaande handmatige installer- en updaterdocumentatie
 

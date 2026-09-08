@@ -1,3 +1,16 @@
+# 0.6.2 — 2026-09-08
+
+- API-key in oude installeropties blokkeert auto-onboarding niet meer. Eenduidige bestaande key wordt persistent overgenomen; een bestaande OneShot-key blijft behouden.
+- Read-only controle onderscheidt onafgeronde onboarding van actieve of al ingerichte legacy-installaties. Geen terugval naar de oude `both`-installatieroute bij een mislukte opstartcontrole.
+- OneShot kan vanuit Ingress met de opgeslagen key gestart worden, zonder YAML-wijziging/herstart/key-herhaling.
+- Vroege controle op andere klantkeys, installatie-ID's en concurrerende agents; snapshots en boot-beveiliging van ongebruikte gestopte agents zonder key.
+- Beschermd legacy-onderhoud installeert geen tweede platform en overschrijft geen agentconfiguratie.
+- Volledige SolarEdge-/generieke options-map, controle van verplichte velden en expliciete foutpropagatie. Geen fictieve configuratie-/startsuccesmelding na HTTP 400.
+- API-foutdetails zichtbaar met secret-redactie; JSON-fouten onder HTTP 200 tellen ook als fout.
+- 28 nieuwe regressietests; 154 lokale tests slagen. Echte Raspberry, Supervisor, ARM-build en omvormers niet getest. Serverpakketten blijven ongewijzigd.
+
+Zie `ONESHOT_HERSTEL_0.6.2.md` voor herstelstappen en testgrenzen.
+
 # 0.6.1 — 2026-09-08
 
 - Repareert het zoeken/installeren van nog niet geïnstalleerde agents via de storecatalogus in plaats van alleen `/addons`.

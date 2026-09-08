@@ -79,7 +79,7 @@ class PureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td)
             self.assertEqual(choose_mode({},path),'oneshot')
-            self.assertEqual(choose_mode({'goodwe_agent_api_key':'old'},path),'manual')
+            self.assertEqual(choose_mode({'goodwe_agent_api_key':'old'},path),'oneshot')
             (path/'dwars_auto_update_state.json').write_text('{}')
             # Scheduler leftovers do not prove a configured customer/agent.
             self.assertEqual(choose_mode({},path),'oneshot')
@@ -308,6 +308,7 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
         from aiohttp.test_utils import TestClient,TestServer
         self.tmp=tempfile.TemporaryDirectory();self.one=OneShot(self.tmp.name,ROOT/'dwars_installer')
         self.env=patch.dict(os.environ,{'DWARS_INGRESS_PROXY':'127.0.0.1'});self.env.start()
+        self.one.sup=AsyncMock(return_value={})
         app=self.one.application();app.on_startup.clear();app.on_cleanup.clear()
         self.client=TestClient(TestServer(app));await self.client.start_server()
     async def asyncTearDown(self):await self.client.close();self.env.stop();self.tmp.cleanup()

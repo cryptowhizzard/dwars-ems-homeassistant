@@ -25,7 +25,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 from oneshot_common import (
     AGENT, DOMAIN, VERSION, REQUIRED, Blocked, api_base, atomic_json, bind_device,
     choose_mode_details, directory_hash, endpoint, extract_payload, install_component,
-    load_json, merge_options, validate_profile,
+    load_json, merge_options, validate_profile, legacy_api_key, LEGACY_KEY_FIELDS,
 )
 
 STAGES = ["profile", "payload", "components", "restart", "bridge", "discover", "mapping", "agent", "verify", "complete"]
@@ -71,6 +71,8 @@ class OneShot:
         self.supervisor = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
         self.profile = load_json(self.data / "oneshot_profile.json")
         self.lock = None
+        self.startup_ready = False
+        self.legacy_platforms = []
 
     def token(self):
         for key in ("SUPERVISOR_TOKEN", "HASSIO_TOKEN"):
@@ -84,8 +86,12 @@ class OneShot:
 
     def safe(self, message):
         text = str(message)
-        for secret in (self.credentials.get("api_key"), os.environ.get("SUPERVISOR_TOKEN"), os.environ.get("HASSIO_TOKEN")):
-            if secret:
+        secrets_to_hide = [self.credentials.get("api_key"), os.environ.get("SUPERVISOR_TOKEN"), os.environ.get("HASSIO_TOKEN")]
+        secrets_to_hide.extend(self.options.get(k) for k in LEGACY_KEY_FIELDS)
+        with contextlib.suppress(Blocked, OSError):
+            secrets_to_hide.append(self.token())
+        for secret in secrets_to_hide:
+            if isinstance(secret, str) and secret:
                 text = text.replace(secret, "[afgeschermd]")
         return text[:900]
 
@@ -103,8 +109,12 @@ class OneShot:
             self.log(f"stage={self.state.get('stage')}; status={self.state.get('status')}; {message}")
 
     def public(self):
+        saved_key = False
+        with contextlib.suppress(Blocked):
+            saved_key = bool(legacy_api_key(self.options))
         return {
             **{key: self.state.get(key) for key in ("installation_id", "stage", "status", "message", "devices", "updated_at", "client_name", "platform")},
+            "can_use_saved_key": saved_key and not self.state.get("client_id"),
             "has_key": bool(self.credentials.get("api_key")), "bound": bool(self.state.get("client_id")), "version": VERSION,
             "mode": self.mode, "mode_reason": self.mode_reason, "label": LABELS.get(self.state.get("stage"), ""),
             "steps": [{"id": key, "label": LABELS[key]} for key in STAGES],
@@ -187,9 +197,64 @@ class OneShot:
             raise Blocked("Deze Raspberry is al aan een andere klant gekoppeld. Bestaande configuratie niet overschreven.")
         if self.state.get("platform") and self.state["platform"] != profile["platform"] and self.state["stage"] not in {"profile", "payload"}:
             raise Blocked("Omvormerplatform is tijdens de installatie gewijzigd. Bestaande agents worden niet omgezet of overschreven.")
+        await self.preflight_agents(profile)
         self.profile = profile
         atomic_json(self.data / "oneshot_profile.json", profile)
         self.save(client_id=profile["client_id"], client_name=profile.get("client_name", ""), platform=profile["platform"])
+
+    @staticmethod
+    def agent_platform(slug):
+        for platform, base in {**AGENT, "legacy_solaredge": "metdezon_bms_agent"}.items():
+            if isinstance(slug, str) and (slug == base or slug.endswith("_" + base)):
+                return "solaredge" if platform == "legacy_solaredge" else platform
+        return None
+
+    async def installed_agents(self):
+        result = await self.sup("GET", "/addons", timeout=30)
+        rows = result.get("addons", result.get("apps", [])) if isinstance(result, dict) else result
+        if not isinstance(rows, list):
+            raise Blocked("Supervisor gaf geen geldige lijst met geïnstalleerde apps; niets gewijzigd.")
+        found = []
+        for row in rows:
+            slug = row.get("slug", "")
+            platform = self.agent_platform(slug)
+            if platform:
+                info = await self.sup("GET", f"/addons/{slug}/info", timeout=30)
+                if not isinstance(info.get("options"), dict):
+                    raise Blocked("Opties van bestaande agent niet leesbaar: " + slug)
+                found.append((slug, platform, info))
+        return found
+
+    async def preflight_agents(self, profile):
+        """Read all ownership checks before making ANY provisioning changes.
+
+        Only unused, unkeyed, stopped sibling apps left by the old `both`
+        installer are disarmed. No foreign or working installation is removed.
+        """
+        found = await self.installed_agents()
+        for slug, platform, info in found:
+            current = info["options"]
+            if current.get("api_key") and current["api_key"] != self.credentials["api_key"]:
+                raise Blocked("Bestaande DWARS-agent heeft een andere klantkey: " + slug + ". Geen integraties of apps gewijzigd.")
+            if current.get("installation_id") not in (None, "", self.state["installation_id"]):
+                raise Blocked("Agent behoort aan een andere OneShot-installatie: " + slug)
+            if platform != profile["platform"] and info.get("state") == "started":
+                raise Blocked("Een andere DWARS-besturingsagent is actief: " + slug + ". Geen tweede besturing gestart.")
+        if not found:
+            return
+        self_info = await self.sup("GET", "/addons/self/info")
+        prefix = self_info["slug"].rsplit("_dwars_installer", 1)[0] + "_"
+        for slug, platform, info in found:
+            if (platform != profile["platform"] and slug.startswith(prefix)
+                    and info.get("state") == "stopped"
+                    and not info["options"].get("api_key") and not info["options"].get("installation_id")
+                    and (info.get("boot") == "auto" or info.get("watchdog"))):
+                snapshot = self.data / ("oneshot_unused_" + slug + ".json")
+                if not snapshot.exists():
+                    atomic_json(snapshot, {"options": info["options"], "boot": info.get("boot"),
+                                           "watchdog": info.get("watchdog"), "state": info.get("state")})
+                await self.sup("POST", f"/addons/{slug}/options", {"boot": "manual", "watchdog": False})
+                self.log("Ongebruikte, ongeconfigureerde agent niet meer automatisch laten opstarten: " + slug)
 
     async def payload_stage(self):
         root_path = self.state.get("payload_root")
@@ -557,6 +622,14 @@ class OneShot:
         if self.maintenance and self.maintenance.returncode is None:
             return
         options_path = self.options_path if self.mode == "manual" else self.effective_options()
+        if self.mode == "manual" and self.legacy_platforms:
+            options = dict(self.options)
+            # Existing agents are updated, never rewritten with installer defaults.
+            options.update({"install_agent_addons": False, "configure_agent_addons": False, "start_agent_addons": False,
+                            "inverter_type": "both" if len(self.legacy_platforms) > 1 else
+                            ("andere_omvormer" if self.legacy_platforms[0] == "other" else self.legacy_platforms[0])})
+            options_path = self.data / "legacy_protected_updater_options.json"
+            atomic_json(options_path, options)
         env = {**os.environ, "DWARS_ONESHOT_BYPASS": "true", "CONFIG_PATH": str(options_path)}
         self.maintenance = await asyncio.create_subprocess_exec("bash", str(self.app_dir / "run.sh"), env=env, start_new_session=True)
 
@@ -585,6 +658,19 @@ class OneShot:
     async def worker(self):
         while True:
             self.wake.clear()
+            if not self.startup_ready:
+                try:
+                    await self.prepare_startup()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    self.save(status="blocked" if isinstance(err, Blocked) else "waiting",
+                              message="Opstartcontrole: " + self.safe(err))
+                    try:
+                        await asyncio.wait_for(self.wake.wait(), timeout=60)
+                    except asyncio.TimeoutError:
+                        pass
+                    continue
             if self.mode == "manual":
                 await self.start_maintenance()
             elif self.credentials.get("api_key") and self.state.get("stage") != "complete":
@@ -617,47 +703,64 @@ class OneShot:
                 pass
 
     async def inspect_legacy_installation(self):
-        """Keep real legacy fleets on their updater; don't infer this from cache alone.
+        """A key/stopped app isn't a commissioned inverter. Probe, don't guess.
 
-        Run only for auto-mode upgrades with updater leftovers. A new install
-        must still be able to display its API-key page without a network call.
-        This probe is read-only and never adopts/copies another app's key.
+        Existing running keyed agents OR a keyed app with an existing HA
+        inverter entry retain legacy maintenance. An API outage suspends
+        provisioning; it never starts the `both` fallback.
         """
-        if (self.options.get("installation_mode", "auto") != "auto" or self.mode != "oneshot"
-                or self.state_path.exists() or self.credentials_path.exists()):
+        if (self.options.get("installation_mode", "auto") != "auto"
+                or self.credentials.get("api_key") or self.state.get("client_id")):
             return
-        if not (any(self.data.glob("*.payload.sha256")) or (self.data / "dwars_auto_update_state.json").exists()):
+        legacy_input = any(self.options.get(k) for k in LEGACY_KEY_FIELDS)
+        leftovers = any(self.data.glob("*.payload.sha256")) or (self.data / "dwars_auto_update_state.json").exists()
+        if not legacy_input and not leftovers:
             return
-        try:
-            result = await self.sup("GET", "/addons", timeout=15)
-            rows = result.get("addons", []) if isinstance(result, dict) else result
-            if not isinstance(rows, list):
-                raise ValueError("Ongeldige lijst met geïnstalleerde apps.")
-            for row in rows:
-                slug = row.get("slug", "")
-                if not isinstance(slug, str) or not any(slug == base or slug.endswith("_" + base) for base in (*AGENT.values(), "metdezon_bms_agent")):
-                    continue
-                info = await self.sup("GET", f"/addons/{slug}/info", timeout=15)
-                if info.get("options", {}).get("api_key"):
-                    self.mode = "manual"
-                    self.mode_reason = "Een reeds geconfigureerde DWARS-agent is aanwezig; bestaande updatefunctie behouden."
-                    return
-            self.mode_reason = "Alleen updaterrestanten gevonden, geen geconfigureerde DWARS-agent; OneShot is beschikbaar."
-        except Exception:
-            # Do not change the behaviour of an old fleet while Supervisor is
-            # unavailable. An explicit oneshot selection bypasses this probe.
+        found = await self.installed_agents()
+        keyed = [(slug, platform, info) for slug, platform, info in found if info["options"].get("api_key")]
+        protected = [(slug, platform) for slug, platform, info in found if info.get("state") == "started"]
+        if keyed and not protected:
+            entries = await self.ha("GET", "/config/config_entries/entry")
+            if not isinstance(entries, list):
+                raise Blocked("Bestaande omvormerconfiguraties zijn niet betrouwbaar te controleren.")
+            existing_domains = {e.get("domain") for e in entries}
+            protected = [(slug, platform) for slug, platform, info in keyed
+                         if platform == "other" or DOMAIN[platform] in existing_domains]
+        if protected:
             self.mode = "manual"
-            self.mode_reason = "Bestaande installatie niet betrouwbaar te controleren; oude updatefunctie behouden. Kies expliciet oneshot voor onboarding."
+            self.legacy_platforms = sorted({platform for _, platform in protected})
+            self.mode_reason = "Bestaande actieve agent of ingerichte omvormer beschermd. OneShot kan vanuit de webinterface worden gestart."
+        else:
+            self.mode = "oneshot"
+            self.mode_reason = "Geen ingerichte omvormer of actieve agent gevonden; OneShot neemt de installatie over."
+
+    async def prepare_startup(self):
+        await self.inspect_legacy_installation()
+        if self.mode == "oneshot" and not self.credentials.get("api_key"):
+            key = legacy_api_key(self.options)
+            if key:
+                self.credentials = {"api_key": key}
+                atomic_json(self.credentials_path, self.credentials)
+                self.save(stage="profile", status="waiting", key_source="installer_options",
+                          message="Bestaande API-key hergebruiken; klantprofiel ophalen en installatie automatisch afronden.")
+                self.log("API-key uit bestaande installerconfiguratie veilig opgeslagen; opnieuw invoeren is niet nodig.")
+        self.startup_ready = True
 
     async def start(self, app):
         self.session = ClientSession()
-        await self.inspect_legacy_installation()
+        try:
+            await self.prepare_startup()
+        except Exception as err:
+            self.save(status="blocked" if isinstance(err, Blocked) else "waiting",
+                      message="Opstartcontrole: " + self.safe(err))
         self.log(f"{VERSION}; mode={self.mode}; stage={self.state['stage']}")
         self.log("Moduskeuze: " + self.mode_reason)
-        if self.mode == "manual":
-            self.log("OneShot is NIET actief. Zet bij Configuratie installation_mode op oneshot, sla op en herstart deze app. Open daarna de webinterface voor de API-key. De oude updater is geen automatische onboarding.")
+        if not self.startup_ready:
+            self.log("Opstartcontrole nog niet geslaagd; geen oude install-/updatecyclus gestart. Controle wordt herhaald.")
+        elif self.mode == "manual":
+            self.log("Bestaand beheer behouden. Gebruik in de webinterface 'OneShot starten' om bewust over te schakelen; geen YAML-wijziging nodig.")
         elif not self.credentials.get("api_key"):
-            self.log("Wacht op API-key. Open de webinterface van deze app en klik op Installatie starten; tot die tijd start geen install-/updatecyclus.")
+            self.log("Wacht op API-key. Open de webinterface en klik op Installatie starten; tot die tijd start geen install-/updatecyclus.")
         else:
             self.log("Opgeslagen API-key beschikbaar; hervatten vanaf " + self.state.get("stage", "profile") + ".")
         self.worker_task = asyncio.create_task(self.worker())
@@ -675,17 +778,38 @@ class OneShot:
         return web.json_response(self.public(), headers={"Cache-Control": "no-store"})
 
     async def handle_start(self, request):
-        if self.mode == "manual":
-            raise web.HTTPConflict(text="Bestaande handmatige installatie: zet installation_mode expliciet op oneshot om deze functie te gebruiken.")
         if self.state.get("client_id") or self.state.get("status") == "running":
             raise web.HTTPConflict(text="Deze installatie is al gekoppeld. Gebruik opnieuw controleren; de sleutel blijft bewaard.")
         body = await request.json()
-        key = body.get("api_key", "") if isinstance(body, dict) else ""
+        if not isinstance(body, dict):
+            raise web.HTTPBadRequest(text="Ongeldig startverzoek.")
+        if body.get("use_saved_key") is True:
+            try:
+                key = legacy_api_key(self.options)
+            except Blocked as err:
+                raise web.HTTPBadRequest(text=self.safe(err)) from err
+        else:
+            key = body.get("api_key", "")
         if not isinstance(key, str) or not 8 <= len(key.strip()) <= 512 or any(ord(c) < 32 for c in key):
             raise web.HTTPBadRequest(text="Ongeldige API-key.")
-        self.credentials = {"api_key": key.strip()}
-        atomic_json(self.credentials_path, self.credentials)
-        self.save(status="waiting", stage="profile", message="API-key ontvangen; installatie wordt gestart.")
+        try:
+            with self.maintenance_lock():
+                # One explicit UI action replaces the old YAML-switch/restart/key dance.
+                # Persist mode through Supervisor, not by rewriting its options.json.
+                options = {**self.options, "installation_mode": "oneshot"}
+                await self.sup("POST", "/addons/self/options", {"options": options})
+                self.options = options
+                self.mode = "oneshot"
+                await self.stop_maintenance()
+                self.credentials = {"api_key": key.strip()}
+                atomic_json(self.credentials_path, self.credentials)
+                self.startup_ready = True
+                self.mode_reason = "OneShot vanuit de webinterface gestart."
+                self.save(status="waiting", stage="profile", message="API-key ontvangen; installatie wordt gestart.")
+        except RuntimeError as err:
+            raise web.HTTPConflict(text=self.safe(err)) from err
+        except APIError as err:
+            raise web.HTTPBadGateway(text=self.safe(err)) from err
         self.wake.set()
         return web.json_response({"ok": True})
 

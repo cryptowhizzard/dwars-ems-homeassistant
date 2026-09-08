@@ -1,6 +1,6 @@
-# DWARS OneShot-release 0.6.1
+# DWARS OneShot-release 0.6.2
 
-**Correctie 0.6.1:** modusherkenning, store-agentinstallatie en voortgangslogs. Zie [ONESHOT_HERSTEL_0.6.1.md](ONESHOT_HERSTEL_0.6.1.md). Alleen het GitHub-pakket wijzigt; eerder geleverde EMS/BMS blijven geldig.
+**Correctie 0.6.2:** bestaande API-key automatisch hergebruiken bij onafgeronde onboarding; geen onterechte `manual`-route door alleen die key. Starten vanuit de webinterface zonder YAML-omweg. Volledige agentopties en expliciete configuratie-/startfouten. Zie [ONESHOT_HERSTEL_0.6.2.md](ONESHOT_HERSTEL_0.6.2.md). Alleen het GitHub-pakket wijzigt; eerder geleverde EMS/BMS blijven vereist en ongewijzigd.
 
 Nieuwe ingang: **DWARS OneShot Installer & Updater**, met API-key-invoer via Home Assistant Ingress. Zie [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md) voor de verplichte EMS/BMS-migratie, veilige uitrolvolgorde, hervatting na herstart en beperkingen bij meerdere batterijsystemen. Zie [ONESHOT_TESTRAPPORT.md](ONESHOT_TESTRAPPORT.md) voor de uitgevoerde controles. Deze release eerst op een test-Raspberry valideren.
 

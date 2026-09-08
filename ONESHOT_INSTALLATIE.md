@@ -1,6 +1,6 @@
-# DWARS OneShot 0.6.1 — installatie en uitrol
+# DWARS OneShot 0.6.2 — installatie en uitrol
 
-Voor de correctie op 0.6.0 en herstel van `mode=manual` zie eerst **ONESHOT_HERSTEL_0.6.1.md**. De serverpakketten/migratie van 0.6.0 blijven ongewijzigd vereist.
+Voor herstel van de vastgelopen 0.6.1-onboarding en de onterechte handmatige route zie eerst **ONESHOT_HERSTEL_0.6.2.md**. De serverpakketten/migratie van 0.6.0 blijven ongewijzigd vereist.
 
 Release: 8 september 2026. Dit is een testrelease; eerst op één test-Raspberry valideren, niet rechtstreeks over de hele vloot uitrollen.
 
@@ -96,7 +96,7 @@ Gebruik het veld **verwacht aantal omvormers** wanneer de installer niet mag afr
 
 ## Bestaande installaties en beheer
 
-`installation_mode: auto` herkent bestaande installerstatus, component-hashes of geconfigureerde agentsleutels en behoudt dan de handmatige updaterroute. Een bestaande installatie wordt niet automatisch opnieuw geprovisioneerd. Zet alleen bewust `installation_mode: oneshot` om een bestaande Raspberry met de nieuwe route te controleren.
+`installation_mode: auto` beschouwt een API-key, component-hash of updaterrestant niet als bewijs dat onboarding klaar is. Een eenduidige bestaande installerkey wordt bij een onafgeronde installatie hergebruikt. Actieve agents en al ingerichte omvormers worden conservatief beschermd; ook een bewust gestopte ingerichte installatie blijft behouden. Start daar bewust vanuit de webinterface met **Start met opgeslagen API-key** om OneShot te gebruiken. Een API-storing tijdens de voorcontrole start niet de oude `both`-installatieroute. Zie het 0.6.2-herstelrapport voor de precieze controles.
 
 Expliciete bestaande sensormappings worden behouden. Komen zij niet overeen met het geselecteerde apparaat, dan wordt de installatie geblokkeerd; ze worden niet stilzwijgend vervangen. Een agent met een andere API-key of een ander installatie-ID wordt niet overgenomen. Een tweede reeds actieve DWARS-besturingsagent voorkomt dat er nog een concurrerende controller wordt gestart. Bewaar of controleer bestaande lokale HA-automatiseringen: de installer kan niet alle mogelijke externe regelingen herkennen.
 

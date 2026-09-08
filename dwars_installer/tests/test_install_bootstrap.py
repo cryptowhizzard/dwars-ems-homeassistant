@@ -25,6 +25,31 @@ from oneshot import OneShot, APIError
 from oneshot_common import atomic_json, choose_mode, choose_mode_details
 
 
+def schema_error(options, schema):
+    """Test double for required fields + JSON types, NOT actual Supervisor.
+
+    Reads the real app manifest. This catches the previous partial-options
+    bug without inventing a permissive fixture which always accepts writes.
+    Range, password security, and all Supervisor internals are not emulated.
+    """
+    if not isinstance(options, dict):
+        return 'expected options object'
+    missing = [k for k, spec in schema.items() if isinstance(spec, str) and not spec.endswith('?') and k not in options]
+    if missing:
+        return 'required key not provided: ' + ', '.join(sorted(missing))
+    for key, value in options.items():
+        spec = schema.get(key)
+        if not isinstance(spec, str):
+            continue
+        kind = spec.rstrip('?').split('(', 1)[0]
+        valid = {'str': isinstance(value, str), 'password': isinstance(value, str),
+                 'bool': type(value) is bool, 'int': type(value) is int,
+                 'float': type(value) in (int, float), 'list': isinstance(value, str)}.get(kind, True)
+        if not valid:
+            return 'invalid JSON type for ' + key
+    return ''
+
+
 class SupervisorFixture:
     def __init__(self):
         self.calls = []
@@ -33,6 +58,11 @@ class SupervisorFixture:
         self.fail_install = False
         self.fail_installed_list = False
         self.fail_store = False
+        self.fail_configure = False
+        self.fail_start = False
+        self.result_error_200 = False
+        self.error_message = 'forced options rejection'
+        self.entries = []
         self.fixture = self
         outer = self
         class Handler(BaseHTTPRequestHandler):
@@ -75,6 +105,34 @@ class SupervisorFixture:
                     if slug not in outer.apps:
                         self.reply(404, {'message': 'not installed'}); return
                     data = outer.apps[slug]
+                elif method == 'GET' and path.startswith('/core/api/config/config_entries/entry'):
+                    self.reply(200, outer.entries); return
+                elif method == 'POST' and path.endswith('/options/validate'):
+                    slug = path.split('/')[2]
+                    if body is None:
+                        self.reply(400, {'message': 'request must be JSON'}); return
+                    info = outer.apps[slug]
+                    error = schema_error(body or info['options'], info.get('schema', {}))
+                    data = {'valid': not bool(error), 'message': error}
+                elif method == 'POST' and path.startswith('/addons/') and path.endswith('/options'):
+                    slug = path.split('/')[2]
+                    if slug == 'self':
+                        data = {}
+                    else:
+                        info = outer.apps[slug]
+                        if 'options' in body:
+                            if outer.fail_configure or outer.result_error_200:
+                                self.reply(200 if outer.result_error_200 else 400, {'result': 'error', 'message': outer.error_message}); return
+                            error = schema_error(body['options'], info.get('schema', {}))
+                            if error:
+                                self.reply(400, {'result': 'error', 'message': error}); return
+                        info.update(body)  # full replacement of the options map
+                        data = {}
+                elif method == 'POST' and path.startswith('/addons/') and path.endswith('/start'):
+                    if outer.fail_start:
+                        self.reply(400, {'message': 'cannot start'}); return
+                    outer.apps[path.split('/')[2]]['state'] = 'started'
+                    data = {}
                 elif method == 'GET' and path.startswith('/store/addons/'):
                     slug = path.split('/')[3]
                     row = next((r for r in outer.catalog if r['slug'] == slug), None)
@@ -184,7 +242,7 @@ class ModeTests(unittest.TestCase):
             path=Path(td)
             self.assertEqual(choose_mode({'installation_mode':'manual'},path),'manual')
             mode, reason=choose_mode_details({'goodwe_agent_api_key':'legacy-secret-value'},path)
-            self.assertEqual(mode,'manual'); self.assertNotIn('legacy-secret-value',reason)
+            self.assertEqual(mode,'oneshot'); self.assertNotIn('legacy-secret-value',reason)
     def test_explicit_oneshot_and_saved_credentials_survive_restart(self):
         with tempfile.TemporaryDirectory() as td:
             path=Path(td); atomic_json(path/'options.json',{'installation_mode':'oneshot','goodwe_agent_api_key':'legacy'})
@@ -202,11 +260,12 @@ class OneShotHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.tmp=tempfile.TemporaryDirectory(); self.path=Path(self.tmp.name)
         self.fixture=SupervisorFixture(); self.one=OneShot(self.path,ROOT/'dwars_installer')
         self.one.supervisor=self.fixture.url; self.one.token=lambda:'test-supervisor-token'
-        self.one.credentials={'api_key':'test-customer-key'}
+        self.one.credentials={}
         self.one.session=ClientSession()
     async def asyncTearDown(self):
         await self.one.session.close(); self.fixture.close(); self.tmp.cleanup()
     async def test_real_aiohttp_parses_store_list_and_installs_agent(self):
+        self.one.credentials={'api_key':'test-customer-key'}
         slug=await self.one.addon_slug('goodwe_agent')
         self.assertEqual(slug,'repo_goodwe_agent')
         with redirect_stdout(io.StringIO()): info=await self.one.ensure_agent(slug)
@@ -215,11 +274,12 @@ class OneShotHTTPTests(unittest.IsolatedAsyncioTestCase):
     async def test_existing_agent_of_other_customer_not_adopted(self):
         self.fixture.apps['repo_goodwe_agent']={'slug':'repo_goodwe_agent','version':'1.9.0','options':{'api_key':'another-client'},'update_available':True}
         from oneshot_common import Blocked
+        self.one.credentials={'api_key':'test-customer-key'}
         with self.assertRaises(Blocked): await self.one.ensure_agent('repo_goodwe_agent')
         self.assertFalse(any(method=='POST' for method,_,_ in self.fixture.calls))
     async def test_legacy_configured_agent_preserves_manual_updater(self):
         (self.path/'dwars_auto_update_state.json').write_text('{}')
-        self.fixture.apps['repo_goodwe_agent']={'slug':'repo_goodwe_agent','version':'1.9.0','options':{'api_key':'legacy-client'}}
+        self.fixture.apps['repo_goodwe_agent']={'slug':'repo_goodwe_agent','version':'1.9.0','options':{'api_key':'legacy-client'},'state':'started'}
         await self.one.inspect_legacy_installation()
         self.assertEqual(self.one.mode,'manual')
         self.assertNotIn('legacy-client',self.one.mode_reason)
@@ -238,13 +298,15 @@ class OneShotHTTPTests(unittest.IsolatedAsyncioTestCase):
         self.one.options['installation_mode']='oneshot'
         await self.one.inspect_legacy_installation()
         self.assertEqual(self.one.mode,'oneshot'); self.assertEqual(self.fixture.calls,[])
-    async def test_probe_failure_keeps_existing_updater(self):
+    async def test_probe_failure_does_not_start_legacy_fallback(self):
         (self.path/'dwars_auto_update_state.json').write_text('{}')
         self.fixture.fail_installed_list=True
-        await self.one.inspect_legacy_installation()
-        self.assertEqual(self.one.mode,'manual')
+        with self.assertRaises(APIError):
+            await self.one.inspect_legacy_installation()
+        self.assertEqual(self.one.mode,'oneshot')
     async def test_saved_key_skips_legacy_probe(self):
         (self.path/'dwars_auto_update_state.json').write_text('{}')
+        self.one.credentials={'api_key':'test-customer-key'}
         atomic_json(self.one.credentials_path,self.one.credentials)
         await self.one.inspect_legacy_installation()
         self.assertEqual(self.one.mode,'oneshot');self.assertEqual(self.fixture.calls,[])

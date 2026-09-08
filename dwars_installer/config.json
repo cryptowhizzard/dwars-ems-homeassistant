@@ -1,6 +1,6 @@
 {
   "name": "DWARS OneShot Installer & Updater",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "slug": "dwars_installer",
   "description": "API-key-only installatie met automatische ontdekking, veilige sensorkoppeling, hervatting na Core-herstart en BMS-telemetriecontrole.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",

@@ -298,8 +298,8 @@ class ShellIntegrationTests(unittest.TestCase):
                               env=env, capture_output=True, text=True, timeout=3, check=True)
 
     def test_supervisor_curl_is_nonrecursive_and_wrapper_exists(self):
-        result = self.run_shell('curl() { echo CALLED; }; supervisor_curl GET /info; try_supervisor_curl GET /info')
-        self.assertEqual(result.stdout.strip(), 'CALLED\nCALLED')
+        result = self.run_shell('curl() { while [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then printf CALLED > \"$2\"; fi; shift; done; printf 200; }; supervisor_curl GET /info; try_supervisor_curl GET /info')
+        self.assertEqual(result.stdout.strip(), 'CALLEDCALLED')
 
     def test_shell_preserves_false_and_zero(self):
         result = self.run_shell('get_bool auto_full_system_update true; get_opt goodwe_agent_client_id 50')
@@ -316,7 +316,7 @@ class ShellIntegrationTests(unittest.TestCase):
         self.assertTrue(config['hassio_api'])
         self.assertTrue(config['homeassistant_api'])
         self.assertEqual(config['hassio_role'], 'manager')
-        self.assertEqual(config['version'], '0.6.1')
+        self.assertEqual(config['version'], '0.6.2')
         self.assertEqual(set(config['options']), set(config['schema']))
         self.assertIn('COPY core_recovery.py /app/core_recovery.py', (self.root/'Dockerfile').read_text())
 
