@@ -24,7 +24,7 @@ import uuid
 from aiohttp import ClientSession, ClientTimeout, web
 from oneshot_common import (
     AGENT, DOMAIN, VERSION, REQUIRED, Blocked, api_base, atomic_json, bind_device,
-    choose_mode, directory_hash, endpoint, extract_payload, install_component,
+    choose_mode_details, directory_hash, endpoint, extract_payload, install_component,
     load_json, merge_options, validate_profile,
 )
 
@@ -51,7 +51,7 @@ class OneShot:
         self.data.mkdir(parents=True, exist_ok=True)
         self.options_path = Path(os.environ.get("CONFIG_PATH", str(self.data / "options.json")))
         self.options = load_json(self.options_path)
-        self.mode = choose_mode(self.options, self.data)
+        self.mode, self.mode_reason = choose_mode_details(self.options, self.data)
         self.state_path = self.data / "oneshot_state.json"
         self.credentials_path = self.data / "oneshot_credentials.json"
         self.state = load_json(self.state_path, {
@@ -89,16 +89,24 @@ class OneShot:
                 text = text.replace(secret, "[afgeschermd]")
         return text[:900]
 
+    def log(self, message):
+        print("[DWARS OneShot] " + self.safe(message), flush=True)
+
     def save(self, **values):
+        previous = (self.state.get("stage"), self.state.get("status"), self.state.get("message"))
         self.state.update(values)
         self.state["updated_at"] = datetime.now(timezone.utc).isoformat()
         atomic_json(self.state_path, self.state)
+        current = (self.state.get("stage"), self.state.get("status"), self.state.get("message"))
+        if current != previous:
+            message = values.get("message", LABELS.get(self.state.get("stage"), ""))
+            self.log(f"stage={self.state.get('stage')}; status={self.state.get('status')}; {message}")
 
     def public(self):
         return {
             **{key: self.state.get(key) for key in ("installation_id", "stage", "status", "message", "devices", "updated_at", "client_name", "platform")},
             "has_key": bool(self.credentials.get("api_key")), "bound": bool(self.state.get("client_id")), "version": VERSION,
-            "mode": self.mode, "label": LABELS.get(self.state.get("stage"), ""),
+            "mode": self.mode, "mode_reason": self.mode_reason, "label": LABELS.get(self.state.get("stage"), ""),
             "steps": [{"id": key, "label": LABELS[key]} for key in STAGES],
         }
 
@@ -135,7 +143,7 @@ class OneShot:
 
     async def sup(self, method, path, payload=None, timeout=60):
         response = await self.request(method, self.supervisor + path, payload, token=self.token(), timeout=timeout)
-        return response.get("data", response)
+        return response.get("data", response) if isinstance(response, dict) else response
 
     async def ha(self, method, path, payload=None, timeout=60):
         return await self.request(method, self.supervisor + "/core/api" + path, payload, token=self.token(), timeout=timeout)
@@ -414,6 +422,7 @@ class OneShot:
             if err.status not in (400, 404):
                 raise
             # Synchronous endpoint is idempotently rechecked after a restart.
+            self.log("Agent niet geïnstalleerd; installeren vanuit de add-onwinkel: " + slug)
             await self.sup("POST", f"/store/addons/{slug}/install", {"background": False}, timeout=1800)
             info = await self.sup("GET", f"/addons/{slug}/info")
         current = info.get("options", {})
@@ -422,6 +431,7 @@ class OneShot:
         if current.get("installation_id") not in (None, "", self.state["installation_id"]):
             raise Blocked("Agent behoort aan een andere OneShot-installatie. Niet bijgewerkt of overschreven.")
         if info.get("update_available"):
+            self.log("Agent bijwerken vanuit de add-onwinkel: " + slug)
             await self.sup("POST", f"/store/addons/{slug}/update", {"backup": True, "background": False}, timeout=1800)
             info = await self.sup("GET", f"/addons/{slug}/info")
         return info
@@ -501,6 +511,7 @@ class OneShot:
             await self.sup("POST", f"/addons/{slug}/options", {"boot": "auto", "auto_update": True})
         info = await self.sup("GET", f"/addons/{slug}/info")
         if info.get("state") != "started":
+            self.log("Geconfigureerde agent starten: " + slug)
             await self.sup("POST", f"/addons/{slug}/start", {}, timeout=180)
         final = await self.sup("GET", f"/addons/{slug}/info")
         if final.get("state") != "started":
@@ -605,8 +616,50 @@ class OneShot:
             except asyncio.TimeoutError:
                 pass
 
+    async def inspect_legacy_installation(self):
+        """Keep real legacy fleets on their updater; don't infer this from cache alone.
+
+        Run only for auto-mode upgrades with updater leftovers. A new install
+        must still be able to display its API-key page without a network call.
+        This probe is read-only and never adopts/copies another app's key.
+        """
+        if (self.options.get("installation_mode", "auto") != "auto" or self.mode != "oneshot"
+                or self.state_path.exists() or self.credentials_path.exists()):
+            return
+        if not (any(self.data.glob("*.payload.sha256")) or (self.data / "dwars_auto_update_state.json").exists()):
+            return
+        try:
+            result = await self.sup("GET", "/addons", timeout=15)
+            rows = result.get("addons", []) if isinstance(result, dict) else result
+            if not isinstance(rows, list):
+                raise ValueError("Ongeldige lijst met geïnstalleerde apps.")
+            for row in rows:
+                slug = row.get("slug", "")
+                if not isinstance(slug, str) or not any(slug == base or slug.endswith("_" + base) for base in (*AGENT.values(), "metdezon_bms_agent")):
+                    continue
+                info = await self.sup("GET", f"/addons/{slug}/info", timeout=15)
+                if info.get("options", {}).get("api_key"):
+                    self.mode = "manual"
+                    self.mode_reason = "Een reeds geconfigureerde DWARS-agent is aanwezig; bestaande updatefunctie behouden."
+                    return
+            self.mode_reason = "Alleen updaterrestanten gevonden, geen geconfigureerde DWARS-agent; OneShot is beschikbaar."
+        except Exception:
+            # Do not change the behaviour of an old fleet while Supervisor is
+            # unavailable. An explicit oneshot selection bypasses this probe.
+            self.mode = "manual"
+            self.mode_reason = "Bestaande installatie niet betrouwbaar te controleren; oude updatefunctie behouden. Kies expliciet oneshot voor onboarding."
+
     async def start(self, app):
         self.session = ClientSession()
+        await self.inspect_legacy_installation()
+        self.log(f"{VERSION}; mode={self.mode}; stage={self.state['stage']}")
+        self.log("Moduskeuze: " + self.mode_reason)
+        if self.mode == "manual":
+            self.log("OneShot is NIET actief. Zet bij Configuratie installation_mode op oneshot, sla op en herstart deze app. Open daarna de webinterface voor de API-key. De oude updater is geen automatische onboarding.")
+        elif not self.credentials.get("api_key"):
+            self.log("Wacht op API-key. Open de webinterface van deze app en klik op Installatie starten; tot die tijd start geen install-/updatecyclus.")
+        else:
+            self.log("Opgeslagen API-key beschikbaar; hervatten vanaf " + self.state.get("stage", "profile") + ".")
         self.worker_task = asyncio.create_task(self.worker())
 
     async def stop(self, app):
@@ -683,5 +736,4 @@ class OneShot:
 if __name__ == "__main__":
     os.umask(0o077)
     installer = OneShot()
-    print(f"[DWARS OneShot] {VERSION}; mode={installer.mode}; stage={installer.state['stage']}", flush=True)
     web.run_app(installer.application(), host="0.0.0.0", port=8099, print=None, access_log=None)

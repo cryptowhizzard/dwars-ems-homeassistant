@@ -1,4 +1,6 @@
-# DWARS OneShot 0.6.0 — installatie en uitrol
+# DWARS OneShot 0.6.1 — installatie en uitrol
+
+Voor de correctie op 0.6.0 en herstel van `mode=manual` zie eerst **ONESHOT_HERSTEL_0.6.1.md**. De serverpakketten/migratie van 0.6.0 blijven ongewijzigd vereist.
 
 Release: 8 september 2026. Dit is een testrelease; eerst op één test-Raspberry valideren, niet rechtstreeks over de hele vloot uitrollen.
 

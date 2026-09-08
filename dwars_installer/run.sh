@@ -287,20 +287,59 @@ install_custom_component() {
   return 0
 }
 
+# Accept the Supervisor envelope plus the documented array/object payloads.
+addon_catalog_rows() {
+  jq -c 'def rows:
+    if type == "array" then .
+    elif type == "object" and has("data") then .data | rows
+    elif type == "object" and ((.addons? | type) == "array") then .addons
+    else error("ongeldig add-oncatalogusantwoord") end;
+    rows'
+}
+
 find_addon_slug() {
   local base_slug="$1"
-  local addons_json
-  addons_json="$(supervisor_curl GET /addons)"
+  local self_info self_slug expected_slug="" installed_rows store_rows combined matches count
+  self_info="$(supervisor_curl GET /addons/self/info)" || return 1
+  self_slug="$(json_field "$self_info" slug '')"
+  case "$self_slug" in
+    *_dwars_installer) expected_slug="${self_slug%_dwars_installer}_${base_slug}" ;;
+    dwars_installer) expected_slug="$base_slug" ;;
+  esac
+  if [ "$base_slug" = "dwars_installer" ] && [ -n "$expected_slug" ]; then
+    printf '%s' "$expected_slug"
+    return 0
+  fi
 
-  printf '%s' "$addons_json" | jq -r --arg base "$base_slug" '
-    (.addons // .data.addons // [])[]
-    | select(
-        .slug == $base
-        or .slug == ("local_" + $base)
-        or (.slug | endswith("_" + $base))
-      )
-    | .slug
-  ' | head -n 1
+  # /addons contains INSTALLED apps only. Uninstalled agents must be looked up
+  # in /store/addons, even when the repository is already registered.
+  installed_rows="$(supervisor_curl GET /addons | addon_catalog_rows)" || return 1
+  if [ -n "$expected_slug" ] && printf '%s' "$installed_rows" | jq -e --arg slug "$expected_slug" 'any(.[]; .slug == $slug and .installed != false)' >/dev/null; then
+    printf '%s' "$expected_slug"
+    return 0
+  fi
+  store_rows="$(supervisor_curl GET /store/addons | addon_catalog_rows)" || {
+    log "Add-onwinkel niet uitleesbaar; geen willekeurige agent gekozen."
+    return 1
+  }
+  combined="$(jq -cn --argjson installed "$installed_rows" --argjson store "$store_rows" '$installed + $store | unique_by(.slug)')" || return 1
+  if [ -n "$expected_slug" ]; then
+    if printf '%s' "$combined" | jq -e --arg slug "$expected_slug" 'any(.[]; .slug == $slug)' >/dev/null; then
+      printf '%s' "$expected_slug"
+      return 0
+    fi
+    log "${base_slug}: niet gevonden in dezelfde repository als deze installer (${expected_slug}); andere repositories worden niet automatisch gebruikt."
+    return 1
+  fi
+  # Compatibility fallback is allowed only when exactly one candidate exists.
+  matches="$(printf '%s' "$combined" | jq -c --arg base "$base_slug" '[.[] | select(.slug == $base or (.slug | endswith("_" + $base))) | .slug] | unique')" || return 1
+  count="$(printf '%s' "$matches" | jq 'length')"
+  if [ "$count" = "1" ]; then
+    printf '%s' "$matches" | jq -r '.[0]'
+    return 0
+  fi
+  log "${base_slug}: geen eenduidige add-on gevonden in geïnstalleerde apps en add-onwinkel (aantal=${count})."
+  return 1
 }
 
 ensure_store_reloaded() {
@@ -314,6 +353,13 @@ json_field() {
   local key="$2"
   local default="${3-}"
   printf '%s' "$json" | jq -r --arg k "$key" --arg d "$default" '((.data // .)[$k] // $d) | tostring' 2>/dev/null || printf '%s' "$default"
+}
+
+addon_info_installed() {
+  printf '%s' "$1" | jq -r '(.data // .) |
+    if .installed == true or
+       (.installed != false and ((.version | type) == "string") and (.version | length) > 0)
+    then "true" else "false" end' 2>/dev/null || printf 'false'
 }
 
 get_addon_info_json() {
@@ -609,7 +655,7 @@ update_addon_if_available() {
   addon_info="$(get_addon_info_json "$addon_slug")"
   store_info="$(get_store_addon_info_json "$addon_slug")"
 
-  installed="$(json_field "$addon_info" installed false)"
+  installed="$(addon_info_installed "$addon_info")"
   current="$(json_field "$addon_info" version '')"
   latest="$(json_field "$store_info" version_latest '')"
   if [ -z "$latest" ] || [ "$latest" = "null" ]; then
@@ -676,27 +722,33 @@ ensure_addon_installed() {
   local label="$2"
   local source_root="${3-}"
 
-  local addon_slug addon_info installed current latest
-  addon_slug="$(find_addon_slug "$base_slug" || true)"
+  local addon_slug addon_info installed current latest installed_rows
+  addon_slug="$(find_addon_slug "$base_slug")" || {
+    log "${label}: niet beschikbaar via de geïnstalleerde apps/add-onwinkel; installatie niet uitgevoerd."
+    return 1
+  }
   if [ -z "$addon_slug" ] || [ "$addon_slug" = "null" ]; then
-    log "${label}: add-on niet gevonden in /addons. Controleer of deze repo in de Add-on Store is toegevoegd."
+    log "${label}: add-on niet gevonden in de add-onwinkel."
     return 1
   fi
 
   log "${label}: slug gevonden: ${addon_slug}"
-  addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info")"
-  installed="$(json_field "$addon_info" installed false)"
-  current="$(json_field "$addon_info" version '')"
-  latest="$(json_field "$addon_info" version_latest '')"
-
-  if [ "$installed" != "true" ]; then
-    log "${label}: installeren via Store API."
-    if ! supervisor_curl POST "/store/addons/${addon_slug}/install" '{"background": false}' >/dev/null; then
-      log "${label}: Store API install faalde; fallback naar /addons/${addon_slug}/install."
-      supervisor_curl POST "/addons/${addon_slug}/install" '{}' >/dev/null
-    fi
-  else
+  installed_rows="$(supervisor_curl GET /addons | addon_catalog_rows)" || return 1
+  if printf '%s' "$installed_rows" | jq -e --arg slug "$addon_slug" 'any(.[]; .slug == $slug and .installed != false)' >/dev/null; then
+    addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info")" || return 1
+    current="$(json_field "$addon_info" version '')"
+    latest="$(json_field "$addon_info" version_latest '')"
     log "${label}: geïnstalleerd (${current:-onbekend}, latest=${latest:-onbekend})."
+  else
+    log "${label}: installeren via Store API."
+    # A failed install is a failure, not a reason to try a deprecated endpoint
+    # or to continue configuring a nonexistent container.
+    supervisor_curl POST "/store/addons/${addon_slug}/install" '{"background": false}' >/dev/null || return 1
+    addon_info="$(supervisor_curl GET "/addons/${addon_slug}/info")" || return 1
+    if [ "$(addon_info_installed "$addon_info")" != "true" ]; then
+      log "${label}: installatie nog niet bevestigd door Supervisor."
+      return 1
+    fi
   fi
 
   if ! update_addon_if_available "$addon_slug" "$base_slug" "$label" "$source_root"; then
@@ -1029,6 +1081,7 @@ configure_installer_self_update() {
 
 install_or_configure_agents() {
   local source_root="${1-}"
+  local agents_failed="false"
   [ "$(get_bool install_agent_addons true)" = "true" ] || return 0
   ensure_store_reloaded
   configure_installer_self_update
@@ -1040,6 +1093,8 @@ install_or_configure_agents() {
       set_addon_boot_auto_update "$goodwe_slug" "GoodWe Agent / BMS"
       configure_goodwe_agent "$goodwe_slug"
       start_addon_if_requested "$goodwe_slug" "GoodWe Agent / BMS"
+    else
+      agents_failed="true"
     fi
   fi
 
@@ -1053,6 +1108,8 @@ install_or_configure_agents() {
       set_addon_boot_auto_update "$se_slug" "SolarEdge Agent / BMS"
       configure_solaredge_agent "$se_slug"
       start_addon_if_requested "$se_slug" "SolarEdge Agent / BMS"
+    else
+      agents_failed="true"
     fi
   fi
 
@@ -1063,8 +1120,11 @@ install_or_configure_agents() {
       set_addon_boot_auto_update "$dwars_slug" "DWARS Generic EMS Add-on"
       configure_dwars_addon "$dwars_slug"
       start_addon_if_requested "$dwars_slug" "DWARS Generic EMS Add-on"
+    else
+      agents_failed="true"
     fi
   fi
+  [ "$agents_failed" = "false" ]
 }
 
 restart_homeassistant_core() {
@@ -1103,7 +1163,7 @@ start_auto_updater() {
   else
     log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
   fi
-  log "DWARS automatische updater (OneShot 0.6.0) starten; dagelijks schema en hervatbare state staan in /data."
+  log "DWARS automatische updater (OneShot 0.6.1) starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }
@@ -1118,6 +1178,7 @@ stop_auto_updater() {
 
 run_install_cycle() {
   local components_changed="false"
+  local agents_failed="false"
   local source_root
   source_root="$(prepare_payload_source)"
 
@@ -1140,7 +1201,7 @@ run_install_cycle() {
     fi
   fi
 
-  install_or_configure_agents "$source_root"
+  install_or_configure_agents "$source_root" || agents_failed="true"
 
   if [ "$components_changed" = "true" ] && [ "$(get_bool restart_homeassistant_after_custom_component true)" = "true" ]; then
     restart_homeassistant_core
@@ -1149,6 +1210,7 @@ run_install_cycle() {
   else
     log "Geen custom component wijzigingen gevonden; restart niet nodig."
   fi
+  [ "$agents_failed" = "false" ]
 }
 
 main() {

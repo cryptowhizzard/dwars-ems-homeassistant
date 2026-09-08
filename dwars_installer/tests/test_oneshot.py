@@ -81,7 +81,8 @@ class PureTests(unittest.TestCase):
             self.assertEqual(choose_mode({},path),'oneshot')
             self.assertEqual(choose_mode({'goodwe_agent_api_key':'old'},path),'manual')
             (path/'dwars_auto_update_state.json').write_text('{}')
-            self.assertEqual(choose_mode({},path),'manual')
+            # Scheduler leftovers do not prove a configured customer/agent.
+            self.assertEqual(choose_mode({},path),'oneshot')
             self.assertEqual(choose_mode({'installation_mode':'oneshot'},path),'oneshot')
             (path/'oneshot_state.json').write_text('{}')
             self.assertEqual(choose_mode({},path),'oneshot')

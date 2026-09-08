@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 DOMAIN = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi", "other": None}
 AGENT = {"goodwe": "goodwe_agent", "solaredge": "solaredge_agent", "other": "dwars_addon"}
 
@@ -98,17 +98,25 @@ def validate_profile(profile):
     return {**profile, "hosts": hosts, "unit_ids": units}
 
 
-def choose_mode(options: dict, data: Path) -> str:
+def choose_mode_details(options: dict, data: Path) -> tuple[str, str]:
+    """Choose conservatively without mistaking updater leftovers for onboarding.
+
+    A payload hash or a scheduler state proves only that an updater ran, not
+    that the customer or any inverter/agent was successfully configured.
+    Explicit manual mode and legacy customer keys retain their protection.
+    """
     requested = options.get("installation_mode", "auto")
     if requested in {"manual", "oneshot"}:
-        return requested
+        return requested, "installation_mode staat expliciet op " + requested + "."
     if (data / "oneshot_state.json").exists() or (data / "oneshot_credentials.json").exists():
-        return "oneshot"
+        return "oneshot", "Opgeslagen OneShot-voortgang of API-key gevonden; installatie hervatten."
     if any(options.get(k) for k in ("goodwe_agent_api_key", "solaredge_agent_api_key", "dwars_addon_api_key")):
-        return "manual"
-    if any(data.glob("*.payload.sha256")) or (data / "dwars_auto_update_state.json").exists():
-        return "manual"
-    return "oneshot"
+        return "manual", "Bestaande agent-API-key in de configuratie; niet automatisch omgezet naar OneShot."
+    return "oneshot", "Geen bestaande klantkoppeling gevonden; OneShot is beschikbaar."
+
+
+def choose_mode(options: dict, data: Path) -> str:
+    return choose_mode_details(options, data)[0]
 
 
 def extract_payload(archive: Path, dest: Path) -> Path:

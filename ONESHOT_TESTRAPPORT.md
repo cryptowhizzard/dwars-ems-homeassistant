@@ -1,5 +1,11 @@
 # DWARS OneShot — testrapport
 
+## Aanvulling 0.6.1
+
+Alle 126 installer-Python-tests slagen (103 bestaande, 23 nieuwe regressiecontroles). De oorspronkelijke store-zoekfout is gereproduceerd met echte curl-verzoeken tegen een lokale Supervisor-HTTP-testdubbel en met de correctie opnieuw gecontroleerd. Voor reproduceerbare details, de wijzigingslijst en niet-uitgevoerde praktijktests: `ONESHOT_HERSTEL_0.6.1.md`. EMS/BMS/PHP zijn in 0.6.1 niet veranderd en niet opnieuw getest.
+
+## Historisch rapport van 0.6.0
+
 Datum: 8 september 2026. Release installer 0.6.0; installatieprotocol 1.
 
 ## Geslaagde gerichte controles

@@ -1,3 +1,13 @@
+# 0.6.1 — 2026-09-08
+
+- Repareert het zoeken/installeren van nog niet geïnstalleerde agents via de storecatalogus in plaats van alleen `/addons`.
+- Herkent appdetails zonder optionele `installed`-boolean en geeft installatiefouten door.
+- Modus `auto` onderscheidt updaterrestanten van een daadwerkelijk geconfigureerde oude agent; bestaande handmatige installaties blijven beschermd.
+- Duidelijke modusreden, instructie voor `installation_mode: oneshot` en voortgangslogs; behoud opgeslagen sleutel/state.
+- 23 nieuwe regressietests met onder meer lokale HTTP-contracttests. Geen wijzigingen aan EMS/BMS of batterijregeling.
+
+Zie `ONESHOT_HERSTEL_0.6.1.md` in de repositoryroot voor installatie en testgrenzen.
+
 # 0.6.0 — 2026-09-08
 
 API-key-only Ingress UI; hervatbare installatie; automatische configflows; apparaatgebonden mapping; BMS-installatieprofiel/status/telemetriecontrole; behoud handmatige updater.

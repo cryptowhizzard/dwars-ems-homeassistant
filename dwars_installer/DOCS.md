@@ -1,8 +1,8 @@
-# DWARS OneShot 0.6.0
+# DWARS OneShot 0.6.1
 
 Nieuwe installatie: start de app, open de webinterface en voer de DWARS API-key in. BMS en EMS moeten eerst zijn bijgewerkt en de migratie moet zijn uitgevoerd. Laat `installation_mode: auto` staan op een nieuwe Raspberry. Geen langlevend HA-token nodig. Voortgang en key blijven bij een herstart bewaard.
 
-Een bestaande installatie blijft in auto-modus de handmatige updater gebruiken. De volledige uitrolhandleiding en grenzen staan in `ONESHOT_INSTALLATIE.md` in de repositoryroot. Deze versie eerst op een test-Raspberry controleren.
+Een bestaande geconfigureerde installatie blijft in auto-modus de handmatige updater gebruiken. Alleen oude updaterbestanden zijn niet langer voldoende om OneShot te blokkeren. Bij `mode=manual`: zet voor automatische onboarding `installation_mode` op `oneshot`, sla op en herstart deze app; open daarna de webinterface. Verwijder de app of zijn `/data` niet. Zie `ONESHOT_HERSTEL_0.6.1.md` voor deze correctie. De volledige uitrolhandleiding en grenzen staan in `ONESHOT_INSTALLATIE.md` in de repositoryroot. Deze versie eerst op een test-Raspberry controleren.
 
 ## Bestaande handmatige installer- en updaterdocumentatie
 
