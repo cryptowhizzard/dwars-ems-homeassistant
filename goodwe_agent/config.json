@@ -1,6 +1,6 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.6",
+  "version": "1.8.7",
   "slug": "goodwe_agent",
   "description": "GoodWe bridge voor DWARS/MetDeZon BMS met entity-detectie, hoofdzekeringgestuurde charge-blockdrempels en veilige legacy options-migratie via DWARS Installer.",
   "startup": "services",
@@ -88,7 +88,8 @@
     "backup_yaml_check_enabled": true,
     "backup_yaml_path": "/config/backup.yaml",
     "backup_yaml_overwrite": false,
-    "main_fuse_profile": "auto"
+    "main_fuse_profile": "auto",
+    "installation_id": ""
   },
   "schema": {
     "api_url": "str",
@@ -163,7 +164,8 @@
     "backup_yaml_check_enabled": "bool",
     "backup_yaml_path": "str",
     "backup_yaml_overwrite": "bool",
-    "main_fuse_profile": "str"
+    "main_fuse_profile": "str",
+    "installation_id": "str?"
   },
   "build_from": {
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
@@ -173,6 +175,10 @@
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/goodwe_agent",
   "hassio_role": "default",
   "map": [
-    "config:rw"
+    {
+      "type": "homeassistant_config",
+      "read_only": false,
+      "path": "/config"
+    }
   ]
 }

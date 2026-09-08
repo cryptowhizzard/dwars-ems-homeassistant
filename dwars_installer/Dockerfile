@@ -1,5 +1,5 @@
 ARG BUILD_ARCH=aarch64
-ARG BUILD_VERSION=0.5.3
+ARG BUILD_VERSION=0.6.0
 FROM ghcr.io/home-assistant/${BUILD_ARCH}-base:3.19
 
 ARG BUILD_ARCH
@@ -22,11 +22,13 @@ RUN apk add --no-cache \
     coreutils \
     ca-certificates \
     python3 \
+    py3-aiohttp \
     tzdata \
     util-linux \
   && update-ca-certificates
 
 WORKDIR /app
+COPY oneshot.py oneshot_common.py oneshot.html /app/
 COPY run.sh /app/run.sh
 COPY auto_updater.py /app/auto_updater.py
 COPY core_recovery.py /app/core_recovery.py

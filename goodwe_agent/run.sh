@@ -26,6 +26,9 @@ get_opt() {
   printf '%s' "$default"
 }
 
+INSTALLATION_ID="$(get_opt installation_id "")"
+export INSTALLATION_ID
+
 # Add-on metadata
 ADDON_VERSION="unknown"
 ADDON_NAME="GoodWe Agent"

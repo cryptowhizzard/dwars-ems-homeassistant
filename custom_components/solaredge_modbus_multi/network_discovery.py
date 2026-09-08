@@ -136,19 +136,21 @@ async def async_probe_solaredge_modbus(
         if not client.connected:
             return False
 
+        parameters = inspect.signature(client.read_holding_registers).parameters
+        unit_kw = "device_id" if "device_id" in parameters else "slave"
         result = await asyncio.wait_for(
-            client.read_holding_registers(address=40000, count=2, slave=unit_id),
+            client.read_holding_registers(address=40000, count=69, **{unit_kw: unit_id}),
             timeout=timeout + 0.5,
         )
         if result is None or result.isError() or not getattr(result, "registers", None):
             return False
 
         registers = result.registers
-        if len(registers) < 2:
+        if len(registers) < 20:
             return False
-
         sunspec_id = (int(registers[0]) << 16) + int(registers[1])
-        return sunspec_id == 0x53756E53
+        manufacturer = b"".join(int(r).to_bytes(2, "big") for r in registers[4:20]).decode("ascii", "ignore").strip("\x00 ").lower()
+        return sunspec_id == 0x53756E53 and "solaredge" in manufacturer
     except Exception as err:  # noqa: BLE001 - discovery must never break config flow
         _LOGGER.debug("SolarEdge Modbus probe failed for %s:%s: %s", host, port, err)
         return False

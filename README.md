@@ -1,3 +1,9 @@
+# DWARS OneShot-release 0.6.0
+
+Nieuwe ingang: **DWARS OneShot Installer & Updater**, met API-key-invoer via Home Assistant Ingress. Zie [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md) voor de verplichte EMS/BMS-migratie, veilige uitrolvolgorde, hervatting na herstart en beperkingen bij meerdere batterijsystemen. Zie [ONESHOT_TESTRAPPORT.md](ONESHOT_TESTRAPPORT.md) voor de uitgevoerde controles. Deze release eerst op een test-Raspberry valideren.
+
+## Bestaande projectdocumentatie
+
 # DWARS EMS Home Assistant
 
 Home Assistant add-on repository voor DWARS EMS componenten, GoodWe en SolarEdge.

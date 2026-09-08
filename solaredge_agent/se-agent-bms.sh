@@ -966,6 +966,7 @@ HB_JSON="$(jq -n \
   --arg agent_name "$AGENT_NAME" \
   --arg agent_type "$AGENT_TYPE" \
   --arg agent_version "$AGENT_VERSION" \
+  --arg installation_id "${INSTALLATION_ID:-}" \
   --arg ha_version "${HA_VERSION:-}" \
   --arg backup_ok "${BACKUP_YAML_OK:-}" \
   --arg backup_path "${BACKUP_YAML_PATH:-}" \
@@ -976,6 +977,7 @@ HB_JSON="$(jq -n \
     agent_name:$agent_name,
     agent_type:$agent_type,
     agent_version:$agent_version,
+    installation_id:$installation_id,
     ha_version:(if $ha_version == "" then null else $ha_version end),
     backup_yaml_ok:(if $backup_ok == "" then null elif (($backup_ok|ascii_downcase) == "true" or $backup_ok == "1") then true else false end),
     backup_yaml_path:(if $backup_path == "" then null else $backup_path end),

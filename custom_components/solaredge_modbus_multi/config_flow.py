@@ -142,6 +142,64 @@ class SolaredgeModbusMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return data, unique_id
 
+    async def async_step_import(self, data: dict[str, Any]) -> FlowResult:
+        """Unattended DWARS import; enable battery/storage entities for NEW entries."""
+        if data.get("dwars_discover"):
+            units = data.get("unit_ids") or [1]
+            discovered: dict[tuple[str, int], dict[str, Any]] = {}
+            for port in (1502, 502):
+                for unit in units:
+                    for item in await async_scan_solaredge_modbus(self.hass, port=port, unit_id=int(unit), limit=64):
+                        key = (str(item["host"]), int(item["port"]))
+                        candidate = discovered.setdefault(key, {**item, "units": []})
+                        candidate["units"].append(int(unit))
+                    for host in data.get("hosts", []):
+                        if await async_probe_solaredge_modbus(host, port=port, unit_id=int(unit)):
+                            candidate = discovered.setdefault((host, port), {"host": host, "port": port, "units": []})
+                            candidate["units"].append(int(unit))
+            failures = []
+            for item in discovered.values():
+                result = await self.hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": "import"},
+                    data={CONF_HOST: item["host"], CONF_PORT: item["port"],
+                          CONF_NAME: "SolarEdge " + str(item["host"]),
+                          ConfName.DEVICE_LIST: ",".join(str(i) for i in sorted(set(item["units"]))),
+                          CONF_MAC: item.get("mac")},
+                )
+                if result.get("type") == "abort" and result.get("reason") != "already_configured":
+                    failures.append(str(result.get("reason")))
+            return self.async_abort(reason="cannot_connect" if failures else "dwars_scan_complete")
+        errors: dict[str, str] = {}
+        normalized, unique = await self._async_validate_and_normalize(data, errors)
+        if not normalized or not unique:
+            return self.async_abort(reason="cannot_connect")
+        for unit in normalized[ConfName.DEVICE_LIST]:
+            if not await async_probe_solaredge_modbus(normalized[CONF_HOST], port=int(normalized[CONF_PORT]), unit_id=int(unit)):
+                return self.async_abort(reason="cannot_connect")
+        await self.async_set_unique_id(unique)
+        existing = self._find_existing_entry(normalized, unique)
+        if existing:
+            options = dict(existing.options)
+            for key in (ConfName.DETECT_METERS, ConfName.DETECT_BATTERIES,
+                        ConfName.DETECT_EXTRAS, ConfName.ADV_PWR_CONTROL,
+                        ConfName.ADV_STORAGE_CONTROL, ConfName.ADV_SITE_LIMIT_CONTROL):
+                options[str(key)] = True
+            updated = dict(existing.data)
+            # Only a positively probed device with matching identity reaches here.
+            updated[CONF_HOST] = normalized[CONF_HOST]
+            if dict(existing.options) != options or dict(existing.data) != updated:
+                self.hass.config_entries.async_update_entry(existing, data=updated, options=options)
+                self.hass.async_create_task(self.hass.config_entries.async_reload(existing.entry_id))
+            return self.async_abort(reason="already_configured")
+        return self.async_create_entry(
+            title=normalized[CONF_NAME], data=normalized,
+            options={CONF_SCAN_INTERVAL: 30, str(ConfName.KEEP_MODBUS_OPEN): True,
+                     str(ConfName.DETECT_METERS): True, str(ConfName.DETECT_BATTERIES): True,
+                     str(ConfName.DETECT_EXTRAS): True, str(ConfName.ADV_PWR_CONTROL): True,
+                     str(ConfName.ADV_STORAGE_CONTROL): True, str(ConfName.ADV_SITE_LIMIT_CONTROL): True,
+                     str(ConfName.SLEEP_AFTER_WRITE): 0},
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:

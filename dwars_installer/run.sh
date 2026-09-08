@@ -1103,7 +1103,7 @@ start_auto_updater() {
   else
     log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
   fi
-  log "DWARS automatische updater 0.5.3 starten; dagelijks schema en hervatbare state staan in /data."
+  log "DWARS automatische updater (OneShot 0.6.0) starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }
@@ -1122,6 +1122,11 @@ run_install_cycle() {
   source_root="$(prepare_payload_source)"
 
   if [ "$(get_bool install_custom_components true)" = "true" ]; then
+    if [ "$(get_bool manage_oneshot_bridge false)" = "true" ] && [ -d "${source_root}/custom_components/dwars_setup" ]; then
+      if install_custom_component "$source_root" dwars_setup; then
+        components_changed="true"
+      fi
+    fi
     if should_handle goodwe; then
       if install_custom_component "$source_root" goodwe; then
         components_changed="true"
@@ -1189,5 +1194,8 @@ main() {
 }
 
 if [ "${DWARS_INSTALLER_LIB_ONLY:-false}" != "true" ]; then
+  if [ "${DWARS_ONESHOT_BYPASS:-false}" != "true" ]; then
+    exec python3 -u /app/oneshot.py
+  fi
   main "$@"
 fi

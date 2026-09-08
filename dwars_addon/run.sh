@@ -26,6 +26,9 @@ get_opt() {
   ' "$OPT_FILE"
 }
 
+INSTALLATION_ID="$(get_opt installation_id "")"
+export INSTALLATION_ID
+
 empty_if_null() {
   local value="${1:-}"
   if [ "$value" = "null" ]; then

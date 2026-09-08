@@ -18,14 +18,17 @@ empty_if_null() {
   fi
 }
 
+INSTALLATION_ID="$(empty_if_null "$(cfg_optional installation_id)")"
+export INSTALLATION_ID
+
 # ============================================================
 # Add-on metadata + Home Assistant backup automation check
 # ============================================================
 
-ADDON_VERSION="3.4.3"
+ADDON_VERSION="3.4.5"
 ADDON_NAME="DWARS SolarEdge Agent"
 if [ -f /app/config.json ]; then
-  ADDON_VERSION="$(jq -r '.version // "3.4.3"' /app/config.json 2>/dev/null || echo "3.4.3")"
+  ADDON_VERSION="$(jq -r '.version // "3.4.5"' /app/config.json 2>/dev/null || echo "3.4.5")"
   ADDON_NAME="$(jq -r '.name // "DWARS SolarEdge Agent"' /app/config.json 2>/dev/null || echo "DWARS SolarEdge Agent")"
 fi
 AGENT_TYPE="solaredge"

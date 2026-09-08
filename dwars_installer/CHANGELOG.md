@@ -1,3 +1,9 @@
+# 0.6.0 — 2026-09-08
+
+API-key-only Ingress UI; hervatbare installatie; automatische configflows; apparaatgebonden mapping; BMS-installatieprofiel/status/telemetriecontrole; behoud handmatige updater.
+
+Zie `ONESHOT_INSTALLATIE.md` in de repositoryroot. Eerst testen op één Raspberry.
+
 # Changelog
 
 ## 0.5.1

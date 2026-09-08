@@ -2253,6 +2253,7 @@ def perform_decision_cycle() -> None:
         "reported_at": int(time.time()),
         "agent_name": AGENT_NAME,
         "agent_type": AGENT_TYPE,
+        "installation_id": os.environ.get("INSTALLATION_ID", ""),
         "agent_version": AGENT_VERSION,
         "ha_version": ha_get_config_version(),
         "backup_yaml_ok": backup.get("backup_yaml_ok"),

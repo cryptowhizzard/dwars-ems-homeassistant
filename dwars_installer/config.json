@@ -1,8 +1,8 @@
 {
-  "name": "DWARS Installer & Updater",
-  "version": "0.5.3",
+  "name": "DWARS OneShot Installer & Updater",
+  "version": "0.6.0",
   "slug": "dwars_installer",
-  "description": "DWARS componenten en dagelijkse systeemupdates met begrensd Core-startherstel en controle op werkelijke API-beschikbaarheid.",
+  "description": "API-key-only installatie met automatische ontdekking, veilige sensorkoppeling, hervatting na Core-herstart en BMS-telemetriecontrole.",
   "url": "https://github.com/cryptowhizzard/dwars-ems-homeassistant/tree/main/dwars_installer",
   "startup": "services",
   "boot": "auto",
@@ -17,9 +17,16 @@
   "hassio_role": "manager",
   "stage": "experimental",
   "map": [
-    "config:rw"
+    {
+      "type": "homeassistant_config",
+      "read_only": false,
+      "path": "/config"
+    }
   ],
   "options": {
+    "installation_mode": "auto",
+    "oneshot_api_base_url": "https://api.metdezon.nl/bms/api/",
+    "oneshot_retry_seconds": 60,
     "inverter_type": "both",
     "install_custom_components": true,
     "install_agent_addons": true,
@@ -131,9 +138,14 @@
     "auto_full_system_update_core_autostart": true,
     "auto_full_system_update_core_start_grace_sec": 120,
     "auto_full_system_update_core_start_max_attempts": 3,
-    "auto_full_system_update_core_recovery_timeout_sec": 900
+    "auto_full_system_update_core_recovery_timeout_sec": 900,
+    "manage_oneshot_bridge": false
   },
   "schema": {
+    "installation_mode": "list(auto|oneshot|manual)",
+    "oneshot_api_base_url": "str",
+    "oneshot_retry_seconds": "int(30,3600)",
+    "manage_oneshot_bridge": "bool?",
     "inverter_type": "list(goodwe|solaredge|both|andere_omvormer)",
     "install_custom_components": "bool",
     "install_agent_addons": "bool",
@@ -251,5 +263,10 @@
     "aarch64": "ghcr.io/home-assistant/aarch64-base:3.19",
     "amd64": "ghcr.io/home-assistant/amd64-base:3.19",
     "armv7": "ghcr.io/home-assistant/armv7-base:3.19"
-  }
+  },
+  "ingress": true,
+  "ingress_port": 8099,
+  "panel_icon": "mdi:home-lightning-bolt",
+  "panel_title": "DWARS OneShot",
+  "panel_admin": true
 }

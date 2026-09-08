@@ -1,0 +1,16 @@
+{
+  "release_date": "2026-09-08",
+  "installer_version": "0.6.0",
+  "protocol_version": 1,
+  "python_tests_passed": 103,
+  "php_targeted_checks_passed": 475,
+  "syntax": {
+    "php": 124,
+    "shell": 8,
+    "python": 51,
+    "json": 31
+  },
+  "hardware_tested": false,
+  "live_database_tested": false,
+  "baseline_smoke_failures": 2
+}

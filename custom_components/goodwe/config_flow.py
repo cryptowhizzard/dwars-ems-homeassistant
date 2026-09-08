@@ -263,6 +263,71 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         title = f"{DEFAULT_NAME} {serial_number}"
         return self.async_create_entry(title=title, data=data)
 
+    async def async_step_import(self, data: dict[str, Any]) -> ConfigFlowResult:
+        """DWARS unattended setup. Always identify the physical serial first."""
+        if data.get("dwars_discover"):
+            discovered = await self._async_discover_unconfigured(include_configured=True)
+            candidates = [
+                {"host": item.host, "protocol": item.protocol or "UDP",
+                 "port": item.port, "model_family": item.model_family,
+                 "mac": item.mac, "expected_serial": item.serial_number}
+                for item in discovered.values()
+            ]
+            candidates.extend({"host": host} for host in data.get("hosts", []))
+            failures = []
+            for candidate in candidates:
+                result = await self.hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": "import"}, data=candidate,
+                )
+                if result.get("type") == "abort" and result.get("reason") not in {
+                    "already_configured", "already_configured_inverter", "updated_ip"
+                }:
+                    failures.append(str(result.get("reason")))
+            if failures:
+                return self.async_abort(reason="cannot_connect")
+            return self.async_abort(reason="dwars_scan_complete")
+
+        host = str(data.get("host") or "").strip()
+        try:
+            ipaddress.IPv4Address(host)
+            inverter, port, protocol = await async_connect_and_detect_port(
+                host=host, protocol=data.get("protocol") or "TCP",
+                port=data.get("port"), family=data.get("model_family"),
+                timeout=2, retries=2,
+            )
+        except (InverterError, OSError, ValueError, TimeoutError):
+            return self.async_abort(reason="cannot_connect")
+        serial = _normalise_serial(getattr(inverter, "serial_number", ""))
+        if not serial:
+            return self.async_abort(reason="missing_serial")
+        if data.get("expected_serial") and serial != _normalise_serial(data["expected_serial"]):
+            return self.async_abort(reason="identity_changed")
+        existing = self._entry_for_serial(serial)
+        if existing is not None:
+            # Only a positively identified serial can repair its old IP. Preserve
+            # manual options/mapping; do not claim another inverter's entry.
+            updated = build_updated_entry_data(
+                dict(existing.data), host=host, port=port, protocol=protocol,
+                family=type(inverter).__name__, mac=data.get("mac"),
+            )
+            options = dict(existing.options)
+            for key, value in ((CONF_HOST, host), (CONF_PORT, port), (CONF_PROTOCOL, protocol)):
+                if key in options:
+                    options[key] = value
+            if dict(existing.data) != updated or dict(existing.options) != options:
+                self.hass.config_entries.async_update_entry(existing, data=updated, options=options)
+                self.hass.async_create_task(self.hass.config_entries.async_reload(existing.entry_id))
+            return self.async_abort(reason="already_configured_inverter")
+        result = await self.async_handle_successful_connection(
+            inverter, host, port, protocol, mac=data.get("mac"),
+        )
+        if result.get("type") == "create_entry":
+            # The external DWARS agent owns control. Do not start the integration's
+            # independent automatic load controller alongside it.
+            result["data"][CONF_AUTO_LOAD_CONTROL] = False
+            result["options"] = {CONF_AUTO_LOAD_CONTROL: False}
+        return result
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -562,7 +627,7 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             protocol=protocol,
         )
 
-    async def _async_discover_unconfigured(self) -> dict[str, GoodweDiscoveryResult]:
+    async def _async_discover_unconfigured(self, *, include_configured: bool = False) -> dict[str, GoodweDiscoveryResult]:
         """Scan, identify and return only not-yet-configured inverters."""
         configured_serials, configured_hosts, configured_macs = (
             self._configured_identity_sets()
@@ -611,7 +676,7 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
                 continue
 
             serial = _normalise_serial(verified.serial_number)
-            if serial in configured_serials:
+            if serial in configured_serials and not include_configured:
                 _LOGGER.debug(
                     "Skipping already configured GoodWe %s discovered at %s",
                     verified.serial_number,
@@ -624,7 +689,7 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
             discovered[serial] = verified
 
         _LOGGER.info(
-            "GoodWe multi-inverter scan found %s not-yet-configured inverter(s): %s",
+            "GoodWe multi-inverter scan returned %s inverter(s): %s",
             len(discovered),
             [item.label for item in discovered.values()],
         )

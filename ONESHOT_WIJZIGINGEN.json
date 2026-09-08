@@ -1,0 +1,211 @@
+{
+  "input_archive": "dwars-ems-homeassistant.zip",
+  "full_codebase": true,
+  "changes": [
+    {
+      "file": "dwars-ems-homeassistant/ONESHOT_INSTALLATIE.md",
+      "change": "added",
+      "sha256": "1d50723bae5d98b47b156218bceff8c1129aa0feb22f07baf4cd686cb1c32866"
+    },
+    {
+      "file": "dwars-ems-homeassistant/ONESHOT_TESTRAPPORT.md",
+      "change": "added",
+      "sha256": "3a3924676f8180abf4f6bf06d905923e87d59d351c9ebbc723a6c4f567c071e3"
+    },
+    {
+      "file": "dwars-ems-homeassistant/README.md",
+      "change": "modified",
+      "sha256": "a86d73a15c5ac5dc12eff6e61cfeec4a7738a22612e0ec0120e9d70767da959e"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/dwars_setup/__init__.py",
+      "change": "added",
+      "sha256": "fd4b03d4675b23709fae46853f5b6fdd00beaee66fba0d519d0f380fbccfd82a"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/dwars_setup/config_flow.py",
+      "change": "added",
+      "sha256": "2e974625d26f83dcf887e7876a0f510bbd0c35ea2ff9f5687235f561a3281c1b"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/dwars_setup/manifest.json",
+      "change": "added",
+      "sha256": "32f7356c5633552f669f2d6bab34c19f17a58499c849fcd64b894497f1c0bc6b"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/dwars_setup/strings.json",
+      "change": "added",
+      "sha256": "bcec3a3241c119a3b2f899d3301c6f5fd464c1466797de19e16d07f758a29173"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/dwars_setup/translations/nl.json",
+      "change": "added",
+      "sha256": "bcec3a3241c119a3b2f899d3301c6f5fd464c1466797de19e16d07f758a29173"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/goodwe/config_flow.py",
+      "change": "modified",
+      "sha256": "837ab6ce04b7c403049fadf42282bf4e12b53479a2303a8c77e6ab897b19f6d5"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/goodwe/manifest.json",
+      "change": "modified",
+      "sha256": "13bb75d7b32c618802472e6269450bace9760e4d211a926585d19447cdafc8bb"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/solaredge_modbus_multi/config_flow.py",
+      "change": "modified",
+      "sha256": "23558632638faca39cd3b5dce3d25896129b394f042017d041002984ef26501c"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/solaredge_modbus_multi/manifest.json",
+      "change": "modified",
+      "sha256": "66910ca8af20316b4e42bfda982e37dbd9a96a6b305ef3ee4d3c1bd6bb6bb494"
+    },
+    {
+      "file": "dwars-ems-homeassistant/custom_components/solaredge_modbus_multi/network_discovery.py",
+      "change": "modified",
+      "sha256": "70605e3153dbc82962fd812e9fe392e74b8638b5965d04a5adf606d018ad79ce"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_addon/CHANGELOG.md",
+      "change": "added",
+      "sha256": "2ffa3f8b3cbb49d7cc75757ef6ea686783cead4f652ad158343b090ff8b54985"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_addon/Dockerfile",
+      "change": "modified",
+      "sha256": "f79792f64978e9b4d99b8353f017ed7cc2894b767ae02b6c1c4387dbeb61aedc"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_addon/config.json",
+      "change": "modified",
+      "sha256": "41020a99ecd492b21c4a8caadbcb3345e339c31d00c7f5c071c0fc676b4a5e24"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_addon/dwars_agent.py",
+      "change": "modified",
+      "sha256": "073715995c3618dcc2432cf45bf7b471740161d729509eab46b69ef08edd18c7"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_addon/run.sh",
+      "change": "modified",
+      "sha256": "4e1d855496674727548c8d164f4af53d98fc41119b1da281f2f0cf96622c7234"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/CHANGELOG.md",
+      "change": "modified",
+      "sha256": "9fd77f20f7d246d539a7ba4b2dbc015098c8958596d52a9816c8c9e12f61bc99"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/DOCS.md",
+      "change": "modified",
+      "sha256": "0c2f3e847cb16652841883b461f872425820c2058df5ab0d4984b8a0757b4376"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/Dockerfile",
+      "change": "modified",
+      "sha256": "67db9e82c4aa54f5b60fce8c412703baec72b4fe2d93430d01fbae5a99a085c6"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/config.json",
+      "change": "modified",
+      "sha256": "361bc0a85eb2db6d2547c78f1a0f8aa84b86c199b9ea0b26c622f7872997b4be"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/oneshot.html",
+      "change": "added",
+      "sha256": "44a45721143c3d2a897fdf1122e12894fff75359c85f98ef9590ffdd043fb007"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/oneshot.py",
+      "change": "added",
+      "sha256": "8f21ebc15868f23cf5ef9483909c8d8e4a1a3f13f465afaae509dbc641ac45bb"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/oneshot_common.py",
+      "change": "added",
+      "sha256": "11cad4e9a626dcf8316e94ac740d3941089f21ba9ad150b8b01c729e7a2acbde"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/run.sh",
+      "change": "modified",
+      "sha256": "5d3580119aa86191443cfe9b6c2cc16581f8a84addc0f245f57cbff5cfdca3f9"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/tests/test_core_recovery.py",
+      "change": "modified",
+      "sha256": "236142c3f166829871e9f1fc1d1fb5f25a5eef419f76f09cdc034f712aa0c1d0"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/tests/test_oneshot.py",
+      "change": "added",
+      "sha256": "95610079ae11490919f8d33c4064e75a37db4bb52668669753d822dc7a6f7918"
+    },
+    {
+      "file": "dwars-ems-homeassistant/dwars_installer/tests/test_setup_imports.py",
+      "change": "added",
+      "sha256": "fef67d2c373ce3c11aaf85697789501c31a5a0ef380ac5a6926abf2d30c743a1"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent/CHANGELOG.md",
+      "change": "added",
+      "sha256": "367791c6b248af80aa85c106da85a123e397afb211b40666e81ca0bb4ca2d59d"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent/Dockerfile",
+      "change": "modified",
+      "sha256": "a2454ab522a304789b786f134a75e93e4c18b22961b1d017b6a6beaaa583da54"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent/config.json",
+      "change": "modified",
+      "sha256": "d3d260d5573da7a8e539ac14c6b58cf7459f8c83b1d28e7e9ede549d2b1e5849"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent/goodwe_agent.py",
+      "change": "modified",
+      "sha256": "f3cc91e5a67c9052eaf1cc7db7ad64fe8c73566e48b61be52ecff9f3e280193c"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent/run.sh",
+      "change": "modified",
+      "sha256": "eff8298111e9f08a118bc1cf9bd77567a1c7964b2dd3106164072e77440ed185"
+    },
+    {
+      "file": "dwars-ems-homeassistant/goodwe_agent.zip",
+      "change": "modified",
+      "sha256": "10c45152cb96043bb2f64ba2b4c75de858c94d01e5d2619f63304e456ad13104"
+    },
+    {
+      "file": "dwars-ems-homeassistant/oneshot-release.json",
+      "change": "added",
+      "sha256": "bc0df33b1a2c446a9fa1f8e5b91e7658e49c47c17b225b37741ebcf45401459f"
+    },
+    {
+      "file": "dwars-ems-homeassistant/solaredge_agent/CHANGELOG.md",
+      "change": "added",
+      "sha256": "868cbc124227bef6a5d880a5386d97e7191a88d65d058f86279aaea0fcda6c2b"
+    },
+    {
+      "file": "dwars-ems-homeassistant/solaredge_agent/Dockerfile",
+      "change": "modified",
+      "sha256": "7836926fbcbecf8b2b44a5dd91dec230ba06f704d7092cc26ab0d5a14da16f9f"
+    },
+    {
+      "file": "dwars-ems-homeassistant/solaredge_agent/config.json",
+      "change": "modified",
+      "sha256": "7e80f4f3b8bfea2274ec4efd9a8729f46c4a91710af9af068b6ecd4900014471"
+    },
+    {
+      "file": "dwars-ems-homeassistant/solaredge_agent/run.sh",
+      "change": "modified",
+      "sha256": "0675a0f6d7990e5813674806aed9f800e4412f6b180068a8315f3b1890be9caa"
+    },
+    {
+      "file": "dwars-ems-homeassistant/solaredge_agent/se-agent-bms.sh",
+      "change": "modified",
+      "sha256": "4998fedddbebc78ea2273dfb7a7bdb6821e31372a6bb7678a10f80bea50d19b1"
+    }
+  ]
+}

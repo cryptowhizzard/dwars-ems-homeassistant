@@ -1,0 +1,1 @@
+{"config":{"step":{"user":{"title":"DWARS OneShot","description":"Installeer de lokale DWARS-installatiebrug. Deze bevat geen API-key of HA-token."}},"abort":{"already_configured":"DWARS OneShot is al geconfigureerd."}}}

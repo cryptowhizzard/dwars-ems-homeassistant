@@ -683,6 +683,7 @@ def loop() -> None:
                 "agent_name": AGENT_NAME,
                 "agent_type": AGENT_TYPE,
                 "agent_version": AGENT_VERSION,
+        "installation_id": os.environ.get("INSTALLATION_ID", ""),
                 "ha_version": ha_version,
                 "backup_yaml_ok": backup_status.get("backup_yaml_ok"),
                 "backup_yaml_path": backup_status.get("backup_yaml_path"),
