@@ -7,6 +7,7 @@ from homeassistant.components import websocket_api
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 DOMAIN = "dwars_setup"
+BRIDGE_VERSION = "1.1.0"
 _LOGGER = logging.getLogger(__name__)
 DOMAINS = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi"}
 
@@ -51,7 +52,12 @@ def inventory(hass):
                 result.append({
                     "platform": platform, "entry_id": entry.entry_id, "serial": serial,
                     "host": entry.options.get("host", entry.data.get("host", "")),
-                    "model": root.model if root else "", "state": str(entry.state),
+                    "model": root.model if root else "",
+                    "state": str(getattr(entry.state, "value", entry.state)),
+                    "reason": str(getattr(entry, "reason", "") or "")[:400],
+                    "disabled_by": str(getattr(entry, "disabled_by", "") or ""),
+                    "config_version": entry.version,
+                    "config_minor_version": entry.minor_version,
                     "entities": snapshots,
                 })
     return result
@@ -119,7 +125,8 @@ async def ws_status(hass, connection, msg):
         connection.send_error(msg["id"], "unauthorized", "Administrator required")
         return
     data = hass.data[DOMAIN]
-    connection.send_result(msg["id"], {"status": data.get("status", "idle"), "error": data.get("error", ""), "devices": inventory(hass)})
+    connection.send_result(msg["id"], {"bridge_version": BRIDGE_VERSION, "status": data.get("status", "idle"),
+                                     "error": data.get("error", ""), "devices": inventory(hass)})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "dwars_setup/enable", vol.Required("entities"): [str]})

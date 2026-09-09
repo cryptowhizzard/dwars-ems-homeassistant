@@ -30,14 +30,23 @@ class GoodWeImportTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         namespace={'asyncio':asyncio,'ipaddress':ipaddress,'InverterError':RuntimeError,
             'DOMAIN':'goodwe','CONF_AUTO_LOAD_CONTROL':'auto_load_control','CONF_HOST':'host',
-            'CONF_PORT':'port','CONF_PROTOCOL':'protocol','_normalise_serial':lambda s:str(s or '').strip().upper()}
-        self.connect=AsyncMock(return_value=(NS(serial_number='GW123'),502,'TCP'))
+            'CONF_PORT':'port','CONF_PROTOCOL':'protocol','CONF_NETWORK_TIMEOUT':'network_timeout',
+            'CONF_DWARS_MANAGED':'dwars_managed','DEFAULT_NETWORK_RETRIES':10,'DEFAULT_MODBUS_ID':0,'_normalise_serial':lambda s:str(s or '').strip().upper()}
+        self.connect=AsyncMock(return_value=(NS(serial_number='GW123',set_keep_alive=Mock(),
+            read_runtime_data=AsyncMock(return_value={'battery_soc':50})),502,'TCP'))
         namespace['async_connect_and_detect_port']=self.connect
         namespace['build_updated_entry_data']=lambda data,**kwargs:{**data,**kwargs}
+        namespace['build_updated_entry_options']=lambda data,**kwargs:dict(data)
+        namespace['complete_entry_data']=lambda data:dict(data)
+        namespace['entry_connection_options']=lambda *a:{'comm_addr':0,'timeout':2,'retries':10}
+        namespace['entry_is_loaded']=lambda entry:getattr(entry,'state','')=='loaded'
+        namespace['entry_is_dwars_managed']=lambda entry:getattr(entry,'source','')=='import'
+        namespace['_entry_value']=lambda entry,key,default=None:entry.options.get(key,entry.data.get(key,default))
+        namespace['_LOGGER']=logging.getLogger('goodwe-tests')
         self.method=source_function(ROOT/'custom_components/goodwe/config_flow.py','async_step_import',namespace,'GoodweFlowHandler')
         self.flow=NS(
             async_abort=lambda **k:{'type':'abort',**k},
-            _entry_for_serial=lambda serial:None,
+            _entry_for_serial=lambda serial:None, _configured_entries=lambda:[],
             async_handle_successful_connection=AsyncMock(return_value={'type':'create_entry','data':{}}),
             _async_discover_unconfigured=AsyncMock(return_value={}),
             hass=NS(config_entries=NS(flow=NS(async_init=AsyncMock(return_value={'type':'create_entry'})),
@@ -57,17 +66,17 @@ class GoodWeImportTests(unittest.IsolatedAsyncioTestCase):
         self.flow._async_discover_unconfigured.return_value={str(i):NS(host=f'192.0.2.{i}',protocol='TCP',port=502,model_family='ET',mac=None,serial_number=f'GW{i}') for i in (10,11)}
         result=await self.method(self.flow,{'dwars_discover':True,'hosts':[]})
         self.assertEqual(result['reason'],'dwars_scan_complete')
-        self.flow._async_discover_unconfigured.assert_awaited_once_with(include_configured=True)
+        self.flow._async_discover_unconfigured.assert_awaited_once_with(include_configured=False)
         self.assertEqual(self.flow.hass.config_entries.flow.async_init.await_count,2)
     async def test_duplicate_keeps_existing_manual_options(self):
-        entry=NS(data={'host':'192.0.2.11','keep':'manual'},options={'keep_setting':True},entry_id='existing')
+        entry=NS(data={'host':'192.0.2.11','keep':'manual'},options={'keep_setting':True},entry_id='existing',state='loaded',source='user')
         self.flow._entry_for_serial=lambda _:entry
         # Avoid scheduling a real reload coroutine in the dummy HA task registry.
         self.flow.hass.async_create_task=lambda coro:coro.close()
         result=await self.method(self.flow,{'host':'192.0.2.10'})
         self.assertEqual(result['reason'],'already_configured_inverter')
-        kwargs=self.flow.hass.config_entries.async_update_entry.call_args.kwargs
-        self.assertEqual(kwargs['data']['keep'],'manual');self.assertEqual(kwargs['options'],entry.options)
+        self.flow.hass.config_entries.async_update_entry.assert_not_called()
+        self.flow.hass.config_entries.async_reload.assert_not_awaited()
 
 
 class ProbeTests(unittest.IsolatedAsyncioTestCase):

@@ -1189,7 +1189,7 @@ start_auto_updater() {
   else
     log "WAARSCHUWING: nog geen Supervisor API-token beschikbaar. Updater blijft draaien en probeert elke minuut opnieuw; legacy HASSIO_TOKEN en S6 environment-files worden ook ondersteund."
   fi
-  log "DWARS automatische updater (OneShot 0.6.2) starten; dagelijks schema en hervatbare state staan in /data."
+  log "DWARS automatische updater (OneShot 0.6.3) starten; dagelijks schema en hervatbare state staan in /data."
   python3 -u /app/auto_updater.py     --daemon     --options "$CONFIG_PATH"     --state "${STATE_DIR}/dwars_auto_update_state.json"     --lock "$MAINTENANCE_LOCK" &
   AUTO_UPDATER_PID=$!
 }

@@ -6,7 +6,8 @@
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "already_configured_inverter": "GoodWe inverter {serial} is already configured at {existing_host}. The address you just tried was {attempted_host}.",
       "missing_serial": "The device responded but did not report a serial number.",
-      "identity_changed": "The device identity changed during setup. Run discovery again or enter the IP address manually."
+      "identity_changed": "The device identity changed during setup. Run discovery again or enter the IP address manually.",
+      "cannot_read_runtime": "GoodWe responds, but runtime measurements could not be read. No new device configuration was saved."
     },
     "error": {
       "connection_error": "[%key:common::config_flow::error::cannot_connect%]"

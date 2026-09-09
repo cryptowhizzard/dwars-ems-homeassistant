@@ -26,6 +26,7 @@ from oneshot_common import (
     AGENT, DOMAIN, VERSION, REQUIRED, Blocked, api_base, atomic_json, bind_device,
     choose_mode_details, directory_hash, endpoint, extract_payload, install_component,
     load_json, merge_options, validate_profile, legacy_api_key, LEGACY_KEY_FIELDS,
+    GOODWE_MAP, SOLAREDGE_MAP,
 )
 
 STAGES = ["profile", "payload", "components", "restart", "bridge", "discover", "mapping", "agent", "verify", "complete"]
@@ -256,9 +257,47 @@ class OneShot:
                 await self.sup("POST", f"/addons/{slug}/options", {"boot": "manual", "watchdog": False})
                 self.log("Ongebruikte, ongeconfigureerde agent niet meer automatisch laten opstarten: " + slug)
 
+    def prepare_release(self):
+        """Refresh old code snapshots once without forgetting device/agent state.
+
+        0.6.2 resumed directly in mapping with its cached 0.6.2 components, even
+        after an app upgrade. A fix in the repository would never be loaded.
+        """
+        if self.state.get("installer_version") == VERSION:
+            return
+        old_stage = self.state.get("stage", "profile")
+        if old_stage not in {"profile", "payload", "complete"} or self.state.get("payload_root"):
+            snapshot = self.data / ("oneshot_before_" + VERSION + ".json")
+            if not snapshot.exists():
+                atomic_json(snapshot, self.state)
+            self.log("Installatiesoftware vernieuwen; bestaande omvormers, agents, API-key en koppelingen blijven behouden.")
+            self.save(installer_version=VERSION, stage="payload", payload_root=None,
+                      payload_version=None, resumed_from_stage=old_stage,
+                      restart_needed=False, restart_requested_at=None,
+                      restart_acknowledged=False, restart_requests=0)
+        else:
+            self.save(installer_version=VERSION)
+
+    def check_payload(self, root):
+        # Never resume with a stale remote/cached component while claiming the
+        # new installer release. This check runs before touching /config.
+        minimums = {"dwars_setup": (1, 1, 0)}
+        if self.profile["platform"] == "goodwe":
+            minimums["goodwe"] = (0, 9, 9, 36)
+        for component, minimum in minimums.items():
+            manifest = load_json(root / "custom_components" / component / "manifest.json")
+            try:
+                actual = tuple(int(part) for part in manifest.get("version", "").split("."))
+            except (TypeError, ValueError):
+                actual = ()
+            if actual < minimum:
+                raise Blocked("De repository bevat nog oude " + component
+                              + "-installatiecode. Publiceer het volledige 0.6.3-pakket in de ingestelde GitHub-branch. Niets overschreven.")
+
     async def payload_stage(self):
         root_path = self.state.get("payload_root")
-        if root_path and (Path(root_path) / "custom_components/dwars_setup/manifest.json").exists():
+        if root_path and self.state.get("payload_version") == VERSION and (Path(root_path) / "custom_components/dwars_setup/manifest.json").exists():
+            self.check_payload(Path(root_path))
             return
         url = self.options.get("github_repo_zip_url", "https://github.com/cryptowhizzard/dwars-ems-homeassistant/archive/refs/heads/main.zip")
         if urlsplit(url).scheme != "https":
@@ -283,7 +322,8 @@ class OneShot:
         for component in needed:
             if not (root / "custom_components" / component / "manifest.json").exists():
                 raise Blocked("Repository mist component: " + component)
-        self.save(payload_root=str(root))
+        self.check_payload(root)
+        self.save(payload_root=str(root), payload_version=VERSION)
 
     async def components_stage(self):
         root = Path(self.state["payload_root"])
@@ -368,7 +408,9 @@ class OneShot:
                 raise Blocked("Installatiebrug kon niet worden geactiveerd.")
         for _ in range(30):
             try:
-                await self.ws("dwars_setup/status")
+                status = await self.ws("dwars_setup/status")
+                if status.get("bridge_version") != "1.1.0":
+                    raise Blocked("Home Assistant gebruikt nog de oude installatiebrug; de nieuwe component moet eerst geladen zijn. Geen omvormerinstellingen gewijzigd.")
                 return
             except APIError:
                 await asyncio.sleep(2)
@@ -377,35 +419,94 @@ class OneShot:
     def save_devices(self, devices, selected=None):
         self.save(devices=[{
             "serial": d.get("serial", ""), "host": d.get("host", ""), "model": d.get("model", ""),
-            "entry_id": d.get("entry_id", ""),
+            "entry_id": d.get("entry_id", ""), "state": d.get("state", ""),
+            "reason": d.get("reason", ""),
             "role": "besturing" if selected and d.get("serial") == selected.get("serial") else "monitoring",
         } for d in devices if d.get("platform") == self.profile["platform"]])
 
+    def inventory_satisfies_profile(self, devices):
+        rows = [d for d in devices if d.get("platform") == self.profile["platform"]]
+        if not rows or len(rows) < int(self.profile.get("expected_inverters", 0)):
+            return False
+        if any(d.get("state") != "loaded" or d.get("disabled_by") for d in rows):
+            return False
+        wanted = str(self.profile.get("control_serial") or "").strip().upper()
+        if wanted and not any(str(d.get("serial", "")).upper() == wanted for d in rows):
+            return False
+        if not set(self.profile.get("hosts", [])).issubset({d.get("host") for d in rows}):
+            return False
+        return True
+
     async def discover_stage(self):
         if self.profile["platform"] == "other":
+            return
+        current = await self.ws("dwars_setup/status")
+        devices = current.get("devices", [])
+        self.save_devices(devices)
+        # Manual recovery is authoritative. No import, IP update or reload of an
+        # already loaded integration is needed just to continue commissioning.
+        if not self.state.get("force_discovery") and self.inventory_satisfies_profile(devices):
+            self.log("Bestaande geladen omvormerconfiguratie gevonden; hergebruiken zonder opnieuw installeren of instellingen wijzigen.")
+            self.save(discovery_completed=True)
             return
         await self.ws("dwars_setup/run", profile={k: self.profile[k] for k in ("platform", "hosts", "unit_ids")})
         for _ in range(250):
             result = await self.ws("dwars_setup/status")
             self.save_devices(result.get("devices", []))
             if result.get("status") == "done":
+                self.save(discovery_completed=True, force_discovery=False)
                 return
             if result.get("status") in {"error", "interrupted"}:
                 raise RuntimeError(result.get("error") or "Ontdekking onderbroken; wordt hervat.")
             await asyncio.sleep(5)
         raise RuntimeError("Ontdekking duurt te lang. Voortgang blijft bewaard.")
 
+    async def binding_profile(self):
+        """Existing same-customer mappings win over entity-name rediscovery."""
+        profile = {**self.profile, "agent_options": dict(self.profile.get("agent_options", {}))}
+        remembered_serial = str(self.state.get("selected_device", {}).get("serial") or "").strip().upper()
+        if remembered_serial and not profile.get("control_serial"):
+            profile["control_serial"] = remembered_serial
+        agents = [(slug, info) for slug, platform, info in await self.installed_agents()
+                  if platform == self.profile["platform"]
+                  and info["options"].get("api_key") == self.credentials.get("api_key")]
+        if len(agents) > 1:
+            raise Blocked("Meerdere agents voor dezelfde klant en hetzelfde platform gevonden; geen willekeurige besturing gekozen.")
+        if agents:
+            slug, info = agents[0]
+            current = info["options"]
+            serial = str(current.get("goodwe_serial_number") or "").strip().upper()
+            wanted = str(profile.get("control_serial") or "").strip().upper()
+            if serial and wanted and serial != wanted:
+                raise Blocked("De bestaande agent bestuurt een ander serienummer dan het EMS-installatieprofiel. Niets overschreven.")
+            if serial and not wanted:
+                profile["control_serial"] = serial
+            for key in set(GOODWE_MAP) | set(SOLAREDGE_MAP):
+                value = current.get(key)
+                if isinstance(value, str) and value not in ("", "auto"):
+                    profile["agent_options"][key] = value
+            self.log("Bestaande klantagent gevonden; handmatige sensorkoppelingen behouden: " + slug)
+        return profile
+
     async def mapping_stage(self):
         platform = self.profile["platform"]
+        profile = await self.binding_profile()
         last_error = None
+        devices = []
         for _ in range(40):
             devices = [] if platform == "other" else (await self.ws("dwars_setup/status")).get("devices", [])
             self.save_devices(devices)
             try:
-                device, mapping = bind_device(self.profile, devices)
+                device, mapping = bind_device(profile, devices)
                 if platform == "other" and any(not mapping.get(k) for k in REQUIRED[platform]):
                     raise Blocked("Anders vereist een vooraf ingevuld entiteitsprofiel in EMS (SoC, netvermogen en modus-select).")
-                disabled = [r["entity_id"] for r in device.get("entities", []) if r.get("disabled_by") and r["entity_id"] in mapping.values()]
+                disabled = [r["entity_id"] for r in device.get("entities", [])
+                            if r.get("disabled_by") == "integration" and r["entity_id"] in mapping.values()]
+                user_disabled = [r["entity_id"] for r in device.get("entities", [])
+                                 if r.get("disabled_by") and r.get("disabled_by") != "integration"
+                                 and r["entity_id"] in {mapping.get(k) for k in REQUIRED[platform]}]
+                if user_disabled:
+                    raise Blocked("Benodigde entiteit is handmatig uitgeschakeld: " + ", ".join(user_disabled))
                 if disabled:
                     await self.ws("dwars_setup/enable", entities=disabled)
                 await self.validate_entities(mapping, device)
@@ -413,17 +514,24 @@ class OneShot:
                 self.save(mapping=mapping, selected_device={k: device.get(k) for k in ("serial", "entry_id", "host")})
                 return
             except Blocked as err:
+                if str(err) != str(last_error):
+                    self.log("Sensorcontrole: " + str(err) + " Bestaande omvormerconfiguratie blijft staan.")
                 last_error = err
-                if "Meerdere batterij" in str(err) or "Anders vereist" in str(err):
+                if "Meerdere batterij" in str(err) or "Anders vereist" in str(err) or "handmatig uitgeschakeld" in str(err):
                     raise
             await asyncio.sleep(5)
-        # Refresh discovery on retry: a newly connected second inverter must not
-        # remain invisible just because the first scan already succeeded.
-        self.save(stage="discover" if platform != "other" else "mapping")
-        raise last_error or Blocked("Sensoren nog niet gereed.")
+        # An unavailable SoC/control or setup error is NOT a missing inverter.
+        # Stay at mapping and read the live registries again on the next retry.
+        rows = [d for d in devices if d.get("platform") == platform]
+        if platform != "other" and (not rows or len(rows) < int(profile.get("expected_inverters", 0))):
+            self.save(stage="discover")  # only actually absent devices warrant discovery
+        raise last_error or Blocked("Sensoren nog niet gereed; bestaande instellingen niet gewijzigd.")
 
     async def validate_entities(self, options, device):
         platform = self.profile["platform"]
+        if platform != "other" and device.get("state") not in (None, "loaded"):
+            raise Blocked("De omvormerconfiguratie is niet geladen: " + str(device.get("state"))
+                          + ". " + str(device.get("reason") or ""))
         owned = {r["entity_id"] for r in device.get("entities", [])}
         keys = list(REQUIRED[platform])
         if platform == "other":
@@ -503,6 +611,9 @@ class OneShot:
 
     async def agent_stage(self):
         platform = self.profile["platform"]
+        # A user may have removed/re-added the device while this app was stopped.
+        # Refresh by live identity, never trust a cached entry_id or sensor map.
+        await self.mapping_stage()
         await self.sup("POST", "/store/reload", {}, timeout=120)
         slug = await self.addon_slug(AGENT[platform])
         installed = await self.sup("GET", "/addons")
@@ -546,6 +657,24 @@ class OneShot:
             if key not in defaults or key in {"api_key", "client_id", "api_url", "telemetry_url", "ha_token", "hass_token", "ha_url", "hass_url", "installation_id"} or isinstance(value, (dict, list)):
                 raise Blocked("Niet toegestane profielinstelling: " + key)
             desired[key] = value
+        manual_configured = bool(current.get("api_key")) and (
+            info.get("state") == "started" or bool(current.get("goodwe_serial_number"))
+            or all(current.get(k) not in (None, "", "auto") for k in REQUIRED[platform])
+        )
+        if manual_configured:
+            if current.get("client_id") not in (None, "", 0, "0", self.profile["client_id"], str(self.profile["client_id"])):
+                raise Blocked("Het klantnummer van de bestaande agent wijkt af; bestaande configuratie niet overschreven.")
+            if current.get("ha_control_enabled") is False:
+                raise Blocked("Besturing staat in de bestaande agent handmatig uit; niet automatisch ingeschakeld.")
+            protected = dict(desired)
+            for key in list(protected):
+                if key == "installation_id":
+                    continue
+                old = current.get(key)
+                if old not in (None, "", "auto"):
+                    protected[key] = old
+            desired = protected
+            self.log("Bestaande agentconfiguratie behouden; alleen ontbrekende koppelingen en installatieregistratie aanvullen.")
         merged, managed = merge_options(current, defaults, desired, self.state.get("managed_options", {}))
         for key, value in merged.items():
             if key in defaults and not isinstance(value, type(defaults[key])):
@@ -588,11 +717,27 @@ class OneShot:
         rows = (await self.ws("dwars_setup/status")).get("devices", [])
         selected = self.state["selected_device"]
         for row in rows:
-            if row.get("entry_id") == selected.get("entry_id") and row.get("serial") == selected.get("serial"):
+            if str(row.get("serial") or "").upper() == str(selected.get("serial") or "").upper() and row.get("platform") == self.profile["platform"]:
                 return row
         raise Blocked("De gekozen omvormer is niet meer aanwezig.")
 
     async def verify_stage(self):
+        # Re-adding the same physical inverter can change HA entry/entity IDs.
+        # Rebind instead of verifying a stale map or starting discovery again.
+        if self.profile["platform"] != "other":
+            try:
+                live = await self.selected_inventory()
+            except Blocked:
+                self.save(stage="mapping")
+                raise
+            owned = {r["entity_id"] for r in live.get("entities", [])}
+            mapping = self.state.get("effective_mapping", self.state.get("mapping", {}))
+            if live.get("entry_id") != self.state.get("selected_device", {}).get("entry_id") or any(
+                mapping.get(k) not in owned for k in REQUIRED[self.profile["platform"]]
+                if k not in {"grid_entity", "ha_grid_sensor"}
+            ):
+                self.save(stage="mapping")
+                raise RuntimeError("Home Assistant-apparaat of entiteitsnamen gewijzigd; bestaande omvormer opnieuw koppelen, niet opnieuw installeren.")
         for _ in range(45):
             info = await self.sup("GET", f"/addons/{self.state['agent_slug']}/info")
             if info.get("state") != "started":
@@ -677,6 +822,7 @@ class OneShot:
                 try:
                     with self.maintenance_lock():
                         await self.profile_stage()  # refresh profile/validity on every retry
+                        self.prepare_release()
                         while self.state["stage"] != "complete":
                             stage = self.state["stage"]
                             self.save(status="running", message=LABELS[stage])
@@ -823,12 +969,64 @@ class OneShot:
             with self.maintenance_lock():
                 await self.stop_maintenance()
                 if self.state.get("stage") == "complete":
-                    self.save(stage="discover" if self.profile["platform"] != "other" else "mapping")
+                    self.save(stage="mapping")
                 self.save(status="waiting", message="Opnieuw controleren met opgeslagen API-key.")
         except RuntimeError as err:
             raise web.HTTPConflict(text=self.safe(err)) from err
         self.wake.set()
         return web.json_response({"ok": True})
+
+    async def handle_discover(self, request):
+        if self.mode == "manual" or not self.credentials.get("api_key"):
+            raise web.HTTPConflict(text="Geen OneShot-installatie actief.")
+        if self.state.get("status") == "running":
+            raise web.HTTPConflict(text="Installatie is al bezig.")
+        if not self.profile or self.profile["platform"] == "other":
+            raise web.HTTPConflict(text="Geen automatisch ontdekbaar omvormerprofiel geladen.")
+        try:
+            with self.maintenance_lock():
+                await self.stop_maintenance()
+                self.save(stage="discover", force_discovery=True, status="waiting",
+                          message="Zoeken naar ontbrekende omvormers; bestaande werkende configuraties blijven behouden.")
+        except RuntimeError as err:
+            raise web.HTTPConflict(text=self.safe(err)) from err
+        self.wake.set()
+        return web.json_response({"ok": True})
+
+    async def handle_diagnostics(self, request):
+        diagnostic = {"installer_version": VERSION, "mode": self.mode,
+                      "stage": self.state.get("stage"), "status": self.state.get("status"),
+                      "message": self.safe(self.state.get("message", "")),
+                      "platform": self.state.get("platform"), "devices": [],
+                      "mapping": self.state.get("mapping", {}),
+                      "restart_requests": self.state.get("restart_requests", 0)}
+        try:
+            live = await self.ws("dwars_setup/status")
+            diagnostic["bridge_version"] = live.get("bridge_version")
+            for device in live.get("devices", []):
+                row = {key: device.get(key) for key in (
+                    "platform", "serial", "host", "entry_id", "model", "state",
+                    "config_version", "config_minor_version", "disabled_by",
+                )}
+                row["reason"] = self.safe(device.get("reason", ""))
+                row["entities"] = [{key: entity.get(key) for key in (
+                    "entity_id", "unique_id", "state", "disabled_by", "last_reported",
+                )} for entity in device.get("entities", [])]
+                diagnostic["devices"].append(row)
+        except Exception as err:
+            diagnostic["inventory_error"] = self.safe(err)
+        # Redact known credentials even if a remote error/label accidentally echoes one.
+        text = json.dumps(diagnostic, ensure_ascii=False, indent=2, default=str)
+        secrets_to_hide = [self.credentials.get("api_key")]
+        secrets_to_hide.extend(self.options.get(k) for k in LEGACY_KEY_FIELDS)
+        with contextlib.suppress(Blocked, OSError):
+            secrets_to_hide.append(self.token())
+        for value in secrets_to_hide:
+            if isinstance(value, str) and value:
+                text = text.replace(value, "[afgeschermd]")
+        return web.Response(text=text, content_type="application/json", headers={
+            "Cache-Control": "no-store", "Content-Disposition": "attachment; filename=dwars-oneshot-diagnose.json",
+        })
 
     async def handle_index(self, request):
         text = (self.app_dir / "oneshot.html").read_text()
@@ -850,8 +1048,10 @@ class OneShot:
         app = web.Application(middlewares=[access], client_max_size=8192)
         app.router.add_get("/", self.handle_index)
         app.router.add_get("/api/status", self.handle_status)
+        app.router.add_get("/api/diagnostics", self.handle_diagnostics)
         app.router.add_post("/api/start", self.handle_start)
         app.router.add_post("/api/retry", self.handle_retry)
+        app.router.add_post("/api/discover", self.handle_discover)
         app.on_startup.append(self.start)
         app.on_cleanup.append(self.stop)
         return app

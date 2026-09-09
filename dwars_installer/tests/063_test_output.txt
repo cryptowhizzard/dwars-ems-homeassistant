@@ -1,0 +1,12 @@
+................................................................. [ 30%]
+........................................................................ [ 64%]
+......................................................... [ 91%]
+...................                                                      [100%]
+=============================== warnings summary ===============================
+dwars_installer/tests/test_062_regressions.py: 36 warnings
+dwars_installer/tests/test_063_http_recovery.py: 5 warnings
+  /opt/pyvenv/lib/python3.13/site-packages/aiohttp/client.py:1510: DeprecationWarning: parameter 'timeout' of type 'float' is deprecated, please use 'timeout=ClientWSTimeout(ws_close=...)'
+    self._resp: _RetType = await self._coro
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+213 passed, 41 warnings, 22 subtests passed in 20.55s

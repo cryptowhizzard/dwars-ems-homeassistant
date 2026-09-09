@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "El dispositivo ya está configurado",
-      "already_in_progress": "El proceso de configuración ya está en curso"
+      "already_in_progress": "El proceso de configuración ya está en curso",
+      "cannot_read_runtime": "GoodWe responds, but runtime measurements could not be read. No new device configuration was saved."
     },
     "error": {
       "connection_error": "No se pudo conectar"

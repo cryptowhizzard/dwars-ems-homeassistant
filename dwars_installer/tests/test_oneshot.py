@@ -35,7 +35,7 @@ def profile(platform='goodwe'):
 
 def device(platform='goodwe', serial='GW123', battery=True):
     result = {'platform': platform, 'serial': serial, 'entry_id': 'entry_' + serial,
-              'host': '192.0.2.10', 'model': 'Test', 'entities': []}
+              'host': '192.0.2.10', 'model': 'Test', 'state': 'loaded', 'entities': []}
     schema = GOODWE_MAP if platform == 'goodwe' else SOLAREDGE_MAP
     for key, (domains, aliases) in schema.items():
         if not battery and ('soc' in key or 'ems' in key or 'storage' in aliases[0]):
@@ -153,7 +153,7 @@ class Simulator(OneShot):
         if name=='install_status.php':
             if payload is not None: self.remote['reports'].append(payload)
             active=any(x.get('state')=='started' for x in self.remote['apps'].values())
-            return {'ok':True,'receipt':{'receipt_count':1 if active else 0,'inverter_serial':self.remote['device']['serial'],
+            return {'ok':True,'receipt':{'receipt_count':1 if active else 0,'inverter_serial':self.remote.get('receipt_serial', self.remote['device']['serial']),
                      'received_at':'2026-09-08 12:00:00'}}
         raise AssertionError(name)
     async def payload_stage(self): self.save(payload_root=str(ROOT))
@@ -170,7 +170,7 @@ class Simulator(OneShot):
         raise AssertionError((method,path))
     async def ws(self,command,**kwargs):
         if command in {'dwars_setup/status','dwars_setup/run'}:
-            return {'status':'done','devices':self.remote['devices']}
+            return {'bridge_version':'1.1.0','status':'done','devices':self.remote['devices']}
         if command=='dwars_setup/enable':return {'enabled':kwargs['entities']}
         raise AssertionError(command)
     async def sup(self,method,path,payload=None,**kwargs):
@@ -271,7 +271,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any('/update' in path for _,path,_ in self.remote['calls']))
     async def test_telemetry_from_wrong_serial_blocked(self):
         self.one.profile=profile();_,m=bind_device(profile(),[self.remote['device']])
-        self.one.save(agent_slug='test_goodwe_agent',selected_device={'serial':'OTHER','entry_id':'other'},mapping=m)
+        self.one.save(agent_slug='test_goodwe_agent',selected_device={k:self.remote['device'].get(k) for k in ('serial','entry_id')},mapping=m)
+        self.remote['receipt_serial']='OTHER'  # Actual device exists; the BMS receipt is wrong.
         self.remote['apps']['test_goodwe_agent']={'state':'started'}
         with self.assertRaisesRegex(Blocked,'ander omvormerserienummer'):await self.one.verify_stage()
     async def test_stale_values_rejected(self):

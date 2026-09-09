@@ -215,7 +215,7 @@ class ProvisioningFixture:
         command=await socket.receive_json();self.messages.append(command)
         kind=command['type']
         if kind=='dwars_setup/run':self.discovered=True
-        result={'status':'done' if self.discovered else 'idle','devices':self.devices if self.discovered else []}
+        result={'bridge_version':'1.1.0','status':'done' if self.discovered else 'idle','devices':self.devices if self.discovered else []}
         if kind=='dwars_setup/enable':result={'enabled':command['entities']}
         await socket.send_json({'id':command['id'],'type':'result','success':True,'result':result})
         await socket.close();return socket
@@ -302,7 +302,7 @@ class WorkerHTTPTests(unittest.IsolatedAsyncioTestCase):
         one.config_dir=self.path/'ha';one.config_dir.mkdir(exist_ok=True)
         one.supervisor=remote.url;one.token=lambda:'fixture-supervisor-token'
         # Use the supplied payload as a downloaded cache, not the public repo.
-        one.state['payload_root']=str(ROOT)
+        one.state.update(payload_root=str(ROOT), payload_version='0.6.3', installer_version='0.6.3')
         async def bms(name,payload=None,query=''):
             return await one.request('POST' if payload is not None else 'GET',remote.url+'/bms/'+name+query,
                                      payload,key=one.credentials['api_key'])

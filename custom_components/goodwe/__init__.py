@@ -39,6 +39,7 @@ from .discovery import (
     build_updated_entry_data,
     build_updated_entry_options,
     entry_connection_options,
+    complete_entry_data,
     normalize_mac,
 )
 from .services import async_setup_services, async_unload_services
@@ -57,7 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GoodweConfigEntry) -> bo
     except InverterError as err:
         raise ConfigEntryNotReady from err
 
-    keep_alive = entry.options.get(CONF_KEEP_ALIVE, False)
+    keep_alive = entry.options.get(CONF_KEEP_ALIVE, entry.data.get(CONF_KEEP_ALIVE, False))
     inverter.set_keep_alive(keep_alive)
 
     # If the entry was created manually and no MAC was available yet, try to
@@ -378,82 +379,25 @@ async def update_listener(hass: HomeAssistant, config_entry: GoodweConfigEntry) 
 async def async_migrate_entry(
     hass: HomeAssistant, config_entry: GoodweConfigEntry
 ) -> bool:
-    """Migrate old config entries."""
+    """Upgrade the schema offline; never rediscover or overwrite a working device.
 
+    DWARS 0.9.9.35 accidentally declared MINOR_VERSION=2 without VERSION=2.
+    Both the resulting v1 entries and earlier proper v2 entries must stay usable.
+    """
     if config_entry.version > 2:
-        # This means the user has downgraded from a future version.
         return False
-
-    if config_entry.version == 1:
-        # Update from version 1 to version 2 adding PROTOCOL and DWARS defaults.
-        host = config_entry.data[CONF_HOST]
-        try:
-            inverter, port, protocol = await async_connect_and_detect_port(
-                host=host,
-                protocol=config_entry.data.get(CONF_PROTOCOL, "UDP"),
-                retries=10,
-            )
-        except InverterError as err:
-            raise ConfigEntryNotReady from err
-
-        discovered = await async_find_inverter_by_host(
-            hass,
-            host,
-            pre_scan_enabled=config_entry.data.get(
-                CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED
-            ),
-            network_cidr=config_entry.data.get(
-                CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR
-            ),
-        )
-        mac = discovered.mac if discovered else None
-        discovery_name = discovered.name if discovered else None
-        new_data = {
-            CONF_HOST: host,
-            CONF_PORT: port,
-            CONF_PROTOCOL: protocol,
-            CONF_KEEP_ALIVE: config_entry.data.get(CONF_KEEP_ALIVE),
-            CONF_MODEL_FAMILY: type(inverter).__name__,
-            CONF_SCAN_INTERVAL: config_entry.data.get(CONF_SCAN_INTERVAL),
-            CONF_NETWORK_RETRIES: config_entry.data.get(CONF_NETWORK_RETRIES),
-            CONF_NETWORK_TIMEOUT: config_entry.data.get(CONF_NETWORK_TIMEOUT),
-            CONF_MODBUS_ID: config_entry.data.get(CONF_MODBUS_ID),
-            CONF_MAC: mac,
-            CONF_DISCOVERY_NAME: discovery_name,
-            CONF_DEFAULT_AREA: config_entry.data.get(
-                CONF_DEFAULT_AREA, DEFAULT_AREA_NAME
-            ),
-            CONF_AUTO_LOAD_CONTROL: config_entry.data.get(
-                CONF_AUTO_LOAD_CONTROL, DEFAULT_AUTO_LOAD_CONTROL
-            ),
-            CONF_PRE_SCAN_ENABLED: config_entry.data.get(
-                CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED
-            ),
-            CONF_NETWORK_CIDR: config_entry.data.get(
-                CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR
-            ),
-        }
-        hass.config_entries.async_update_entry(
-            config_entry, data=new_data, version=2
-        )
-
-    else:
-        # Ensure existing v2 entries get DWARS defaults when this code is installed.
-        changed = False
-        data: dict[str, Any] = dict(config_entry.data)
-        if CONF_DEFAULT_AREA not in data:
-            data[CONF_DEFAULT_AREA] = DEFAULT_AREA_NAME
-            changed = True
-        if CONF_AUTO_LOAD_CONTROL not in data:
-            data[CONF_AUTO_LOAD_CONTROL] = DEFAULT_AUTO_LOAD_CONTROL
-            changed = True
-        if CONF_PRE_SCAN_ENABLED not in data:
-            data[CONF_PRE_SCAN_ENABLED] = DEFAULT_PRE_SCAN_ENABLED
-            changed = True
-        if CONF_NETWORK_CIDR not in data:
-            data[CONF_NETWORK_CIDR] = DEFAULT_NETWORK_CIDR
-            changed = True
-        if changed:
-            hass.config_entries.async_update_entry(config_entry, data=data)
-
+    data = complete_entry_data(dict(config_entry.data))
+    for key, default in (
+        (CONF_DEFAULT_AREA, DEFAULT_AREA_NAME),
+        (CONF_AUTO_LOAD_CONTROL, DEFAULT_AUTO_LOAD_CONTROL),
+        (CONF_PRE_SCAN_ENABLED, DEFAULT_PRE_SCAN_ENABLED),
+        (CONF_NETWORK_CIDR, DEFAULT_NETWORK_CIDR),
+    ):
+        if data.get(key) is None:
+            data[key] = default
+    # Null values from old migrations are not intentional user overrides.
+    options = {key: value for key, value in config_entry.options.items() if value is not None}
+    hass.config_entries.async_update_entry(
+        config_entry, data=data, options=options, version=2, minor_version=3,
+    )
     return True

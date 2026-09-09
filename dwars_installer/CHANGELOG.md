@@ -1,3 +1,16 @@
+# 0.6.3 — 2026-09-09
+
+- GoodWe flow/migratie beide schema 2.3; ontbrekende/default-null velden offline herstellen zonder geldige gebruikersinstellingen te vervangen.
+- Setup respecteert persistente timeout, retries, Modbus-unit-ID, pollinterval en keep-alive.
+- Automatische import vereist runtime-meetdata, slaat de geteste verbindingsparameters op en laat geladen/handmatige/uitgeschakelde entries ongemoeid.
+- Hervatten leest actuele HA-laadstatus en serienummer/entiteiten. Sensorfouten betekenen geen herinstallatie; handmatige re-add wijzigt alleen de interne koppeling.
+- Bestaande agententiteiten en batterij-/veiligheidsinstellingen behouden; alleen ontbrekende installatie-ID registreren indien nodig.
+- Oude payload eenmalig ongeldig maken bij releaseovergang; brug 1.1.0 en GoodWe 0.9.9.36 controleren.
+- Afzonderlijke herstel-/ontdekknoppen en Ingress-diagnose-export zonder sleutels.
+- 59 nieuwe lokale tests, 213 totaal; echte HA/Supervisor/hardware en ARM-build niet uitgevoerd.
+
+Zie `ONESHOT_HERSTEL_0.6.3.md` en `ONESHOT_HERSTEL_0.6.3_TESTRAPPORT.md` in de repositoryroot.
+
 # 0.6.2 — 2026-09-08
 
 - API-key in oude installeropties blokkeert auto-onboarding niet meer. Eenduidige bestaande key wordt persistent overgenomen; een bestaande OneShot-key blijft behouden.

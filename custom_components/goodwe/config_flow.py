@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_NETWORK_CIDR,
     DEFAULT_NETWORK_RETRIES,
     DEFAULT_NETWORK_TIMEOUT,
+    CONF_DWARS_MANAGED,
     DEFAULT_PRE_SCAN_ENABLED,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -49,6 +50,11 @@ from .discovery import (
     async_find_inverter_by_host,
     async_scan_goodwe_inverters,
     build_updated_entry_data,
+    build_updated_entry_options,
+    complete_entry_data,
+    entry_is_loaded,
+    entry_is_dwars_managed,
+    entry_connection_options,
     normalize_mac,
     resolve_network_cidr,
 )
@@ -122,12 +128,12 @@ class OptionsFlowHandler(OptionsFlow):
             CONF_MODEL_FAMILY, self.entry.data[CONF_MODEL_FAMILY]
         )
         network_retries = self.entry.options.get(
-            CONF_NETWORK_RETRIES, DEFAULT_NETWORK_RETRIES
+            CONF_NETWORK_RETRIES, self.entry.data.get(CONF_NETWORK_RETRIES, DEFAULT_NETWORK_RETRIES)
         )
         network_timeout = self.entry.options.get(
-            CONF_NETWORK_TIMEOUT, DEFAULT_NETWORK_TIMEOUT
+            CONF_NETWORK_TIMEOUT, self.entry.data.get(CONF_NETWORK_TIMEOUT, DEFAULT_NETWORK_TIMEOUT)
         )
-        modbus_id = self.entry.options.get(CONF_MODBUS_ID, DEFAULT_MODBUS_ID)
+        modbus_id = self.entry.options.get(CONF_MODBUS_ID, self.entry.data.get(CONF_MODBUS_ID, DEFAULT_MODBUS_ID))
         default_area = self.entry.options.get(
             CONF_DEFAULT_AREA,
             self.entry.data.get(CONF_DEFAULT_AREA, DEFAULT_AREA_NAME),
@@ -159,7 +165,7 @@ class OptionsFlowHandler(OptionsFlow):
                     CONF_KEEP_ALIVE: keep_alive,
                     CONF_MODEL_FAMILY: model_family,
                     CONF_SCAN_INTERVAL: self.entry.options.get(
-                        CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
+                        CONF_SCAN_INTERVAL, self.entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
                     ),
                     CONF_NETWORK_RETRIES: network_retries,
                     CONF_NETWORK_TIMEOUT: network_timeout,
@@ -176,7 +182,8 @@ class OptionsFlowHandler(OptionsFlow):
 class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
     """Handle a Goodwe config flow."""
 
-    MINOR_VERSION = 2
+    VERSION = 2
+    MINOR_VERSION = 3
 
     def __init__(self) -> None:
         """Initialize the GoodWe flow."""
@@ -260,71 +267,145 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         # inverter entry from a user/manual discovery flow.
         self._abort_if_unique_id_configured()
 
+        data = complete_entry_data(data)
         title = f"{DEFAULT_NAME} {serial_number}"
         return self.async_create_entry(title=title, data=data)
 
     async def async_step_import(self, data: dict[str, Any]) -> ConfigFlowResult:
-        """DWARS unattended setup. Always identify the physical serial first."""
+        """Add verified inverters, never reconfigure a working/manual entry.
+
+        Discovery is NOT a reconfiguration flow. A reachable serial does not
+        authorize changing a user's port, transport, unit-ID or other options.
+        Only our own failed entries may be repaired, after runtime reads succeed.
+        """
         if data.get("dwars_discover"):
-            discovered = await self._async_discover_unconfigured(include_configured=True)
+            discovered = await self._async_discover_unconfigured(include_configured=False)
             candidates = [
                 {"host": item.host, "protocol": item.protocol or "UDP",
                  "port": item.port, "model_family": item.model_family,
                  "mac": item.mac, "expected_serial": item.serial_number}
                 for item in discovered.values()
             ]
-            candidates.extend({"host": host} for host in data.get("hosts", []))
+            known_hosts = {item["host"] for item in candidates}
+            # Include failed DWARS entries for a bounded repair attempt, but not
+            # manual entries. Healthy configured devices are already in HA.
+            for entry in self._configured_entries():
+                if (entry_is_dwars_managed(entry) and not entry_is_loaded(entry)
+                        and not getattr(entry, "disabled_by", None)):
+                    host = str(_entry_value(entry, CONF_HOST, "") or "")
+                    if host and host not in known_hosts:
+                        candidates.append({"host": host, "expected_serial": entry.unique_id,
+                                           "protocol": _entry_value(entry, CONF_PROTOCOL, "UDP"),
+                                           "port": _entry_value(entry, CONF_PORT),
+                                           "model_family": _entry_value(entry, CONF_MODEL_FAMILY)})
+                        known_hosts.add(host)
+            for host in data.get("hosts", []):
+                if host not in known_hosts:
+                    candidates.append({"host": host})
+                    known_hosts.add(host)
             failures = []
             for candidate in candidates:
                 result = await self.hass.config_entries.flow.async_init(
                     DOMAIN, context={"source": "import"}, data=candidate,
                 )
-                if result.get("type") == "abort" and result.get("reason") not in {
+                if result.get("type") != "create_entry" and result.get("reason") not in {
                     "already_configured", "already_configured_inverter", "updated_ip"
                 }:
-                    failures.append(str(result.get("reason")))
+                    failures.append(candidate["host"] + ": " + str(result.get("reason") or result.get("type")))
             if failures:
+                _LOGGER.warning("DWARS discovery incomplete: %s", "; ".join(failures))
                 return self.async_abort(reason="cannot_connect")
             return self.async_abort(reason="dwars_scan_complete")
 
         host = str(data.get("host") or "").strip()
         try:
             ipaddress.IPv4Address(host)
-            inverter, port, protocol = await async_connect_and_detect_port(
-                host=host, protocol=data.get("protocol") or "TCP",
-                port=data.get("port"), family=data.get("model_family"),
-                timeout=2, retries=2,
-            )
-        except (InverterError, OSError, ValueError, TimeoutError):
+        except (ValueError, TypeError):
             return self.async_abort(reason="cannot_connect")
-        serial = _normalise_serial(getattr(inverter, "serial_number", ""))
-        if not serial:
-            return self.async_abort(reason="missing_serial")
-        if data.get("expected_serial") and serial != _normalise_serial(data["expected_serial"]):
-            return self.async_abort(reason="identity_changed")
-        existing = self._entry_for_serial(serial)
+
+        # Reuse even before probing: do not disrupt a working TCP session just
+        # because the installer resumed or a supplied host is already configured.
+        expected = _normalise_serial(data.get("expected_serial"))
+        existing = self._entry_for_serial(expected) if expected else None
+        if existing is None:
+            existing = next((entry for entry in self._configured_entries()
+                             if str(_entry_value(entry, CONF_HOST, "")) == host
+                             and (not expected or _normalise_serial(entry.unique_id) == expected)), None)
+        if existing is not None and (entry_is_loaded(existing)
+                                     or not entry_is_dwars_managed(existing)
+                                     or getattr(existing, "disabled_by", None)):
+            _LOGGER.info("DWARS reuses GoodWe entry %s; connection and options unchanged", existing.entry_id)
+            return self.async_abort(reason="already_configured_inverter")
+
+        # Use the successful scan transport first. Identity alone is not enough:
+        # require a real runtime read on the SAME connection before saving it.
+        connection = entry_connection_options(existing.data, existing.options) if existing is not None else {
+            "comm_addr": DEFAULT_MODBUS_ID, "timeout": 2, "retries": DEFAULT_NETWORK_RETRIES,
+        }
+        probe_timeout = max(2, connection["timeout"])
+        preferred = data.get("protocol") or "UDP"
+        attempts = [(preferred, data.get("port")),
+                    ("UDP" if preferred == "TCP" else "TCP", 8899 if preferred == "TCP" else 502)]
+        failure = "cannot_connect"
+        for protocol_hint, port_hint in attempts:
+            try:
+                inverter, port, protocol = await asyncio.wait_for(
+                    async_connect_and_detect_port(
+                        host=host, protocol=protocol_hint, port=port_hint,
+                        family=data.get("model_family"), timeout=probe_timeout,
+                        retries=connection["retries"], comm_addr=connection["comm_addr"],
+                    ), timeout=90,
+                )
+                serial = _normalise_serial(getattr(inverter, "serial_number", ""))
+                if not serial:
+                    return self.async_abort(reason="missing_serial")
+                if expected and serial != expected:
+                    return self.async_abort(reason="identity_changed")
+                # A candidate may use a different address for a known serial.
+                existing = self._entry_for_serial(serial)
+                if existing is not None and (entry_is_loaded(existing)
+                                             or not entry_is_dwars_managed(existing)
+                                             or getattr(existing, "disabled_by", None)):
+                    return self.async_abort(reason="already_configured_inverter")
+                inverter.set_keep_alive(False)
+                runtime = await asyncio.wait_for(inverter.read_runtime_data(), timeout=60)
+                if not isinstance(runtime, dict) or not runtime:
+                    raise ValueError("No runtime measurements received")
+            except (InverterError, OSError, ValueError, TimeoutError) as err:
+                _LOGGER.warning("DWARS GoodWe setup probe %s %s/%s failed: %s",
+                                host, protocol_hint, port_hint, err)
+                failure = "cannot_read_runtime"
+                continue
+            break
+        else:
+            return self.async_abort(reason=failure)
+
         if existing is not None:
-            # Only a positively identified serial can repair its old IP. Preserve
-            # manual options/mapping; do not claim another inverter's entry.
-            updated = build_updated_entry_data(
+            # Only a failed DWARS import reaches here. Persist verified network
+            # facts in data AND existing overrides; preserve every other option.
+            updated = complete_entry_data(build_updated_entry_data(
                 dict(existing.data), host=host, port=port, protocol=protocol,
                 family=type(inverter).__name__, mac=data.get("mac"),
+            ))
+            updated[CONF_NETWORK_TIMEOUT] = probe_timeout
+            options = build_updated_entry_options(
+                dict(existing.options), host=host, port=port, protocol=protocol,
+                family=type(inverter).__name__, mac=data.get("mac"),
             )
-            options = dict(existing.options)
-            for key, value in ((CONF_HOST, host), (CONF_PORT, port), (CONF_PROTOCOL, protocol)):
-                if key in options:
-                    options[key] = value
-            if dict(existing.data) != updated or dict(existing.options) != options:
-                self.hass.config_entries.async_update_entry(existing, data=updated, options=options)
-                self.hass.async_create_task(self.hass.config_entries.async_reload(existing.entry_id))
+            self.hass.config_entries.async_update_entry(existing, data=updated, options=options)
+            # No double-scheduled reload. Failed entries have no active listeners;
+            # recheck state immediately before touching a newly recovered entry.
+            if not entry_is_loaded(existing):
+                await self.hass.config_entries.async_reload(existing.entry_id)
             return self.async_abort(reason="already_configured_inverter")
+
         result = await self.async_handle_successful_connection(
             inverter, host, port, protocol, mac=data.get("mac"),
         )
         if result.get("type") == "create_entry":
-            # The external DWARS agent owns control. Do not start the integration's
-            # independent automatic load controller alongside it.
             result["data"][CONF_AUTO_LOAD_CONTROL] = False
+            result["data"][CONF_DWARS_MANAGED] = True
+            result["data"][CONF_NETWORK_TIMEOUT] = probe_timeout
             result["options"] = {CONF_AUTO_LOAD_CONTROL: False}
         return result
 

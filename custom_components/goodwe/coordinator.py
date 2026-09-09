@@ -74,7 +74,7 @@ class GoodweUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             config_entry=entry,
             name=entry.title,
             update_interval=timedelta(
-                seconds=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
+                seconds=entry.options.get(CONF_SCAN_INTERVAL) or entry.data.get(CONF_SCAN_INTERVAL) or DEFAULT_SCAN_INTERVAL
             ),
         )
         self.inverter: Inverter = inverter

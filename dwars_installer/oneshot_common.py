@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 DOMAIN = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi", "other": None}
 AGENT = {"goodwe": "goodwe_agent", "solaredge": "solaredge_agent", "other": "dwars_addon"}
 
@@ -206,8 +206,10 @@ def match_entity(device, domains, aliases, root=None):
         uid = _normalized(row.get("unique_id"))
         # GoodWe's unique-id is goodwe-<sensor key>-<serial>.
         serial = _normalized(device.get("serial"))
-        if uid.startswith("goodwe_") and serial and uid.endswith("_" + serial):
-            uid = uid[len("goodwe_"):-len(serial)-1]
+        if serial and uid.endswith("_" + serial):
+            uid = uid[:-len(serial)-1]
+            if uid.startswith("goodwe_"):
+                uid = uid[len("goodwe_"):]
         fields = [_normalized(row.get("translation_key")), uid]
         best = 0
         for priority, alias in enumerate(aliases):
@@ -267,6 +269,14 @@ def bind_device(profile, devices):
         raise Blocked(f"{len(candidates)} van {expected} verwachte omvormers gevonden. Controleer netwerk/Modbus.")
     if platform == "other":
         return {"serial": "", "entities": []}, dict(profile.get("agent_options", {}))
+    # A failed/still-loading entry must not be mistaken for a new inverter or
+    # used for control just because old entity IDs are still in the registry.
+    for device in candidates:
+        state = device.get("state")
+        if device.get("disabled_by") or (state is not None and state != "loaded"):
+            raise Blocked("Home Assistant-integratie " + str(device.get("serial") or device.get("host"))
+                          + " is niet geladen (" + str(state or "uitgeschakeld") + "). "
+                          + str(device.get("reason") or "Wachten op Home Assistant; bestaande instellingen blijven behouden."))
     schema = GOODWE_MAP if platform == "goodwe" else SOLAREDGE_MAP
     targets = []
     for device in candidates:
@@ -278,7 +288,10 @@ def bind_device(profile, devices):
             root = (False if option == "ha_grid_sensor" else True if option == "ha_pv_sensor" else None)
             explicit = profile.get("agent_options", {}).get(option)
             if explicit:
-                mappings[option] = explicit
+                if option in {"grid_entity", "ha_grid_sensor"} or any(
+                    row["entity_id"] == explicit for row in device.get("entities", [])
+                ):
+                    mappings[option] = explicit
                 continue
             row = match_entity(device, domains, aliases, root=root)
             if row:

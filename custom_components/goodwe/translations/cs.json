@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "Zařízení je již nastaveno",
-      "already_in_progress": "Nastavení již probíhá"
+      "already_in_progress": "Nastavení již probíhá",
+      "cannot_read_runtime": "GoodWe responds, but runtime measurements could not be read. No new device configuration was saved."
     },
     "error": {
       "connection_error": "Nepodařilo se připojit"

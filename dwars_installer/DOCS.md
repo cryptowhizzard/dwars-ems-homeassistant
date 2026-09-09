@@ -1,12 +1,12 @@
-# DWARS OneShot 0.6.2
+# DWARS OneShot 0.6.3
 
-Open de webinterface en voer de DWARS API-key in. BMS en EMS moeten eerst de OneShot-serverupdate en migratie hebben. Er is geen long-lived HA-token nodig. Key en voortgang blijven bij een herstart bewaard.
+Open de webinterface voor API-key-invoer. Bij een onderbroken OneShot blijft de opgeslagen key geldig; er hoeft niets gewist of opnieuw toegevoegd te worden.
 
-Op een onafgeronde auto-installatie wordt één API-key uit de bestaande installeropties hergebruikt: de key alleen schakelt OneShot niet meer uit. Een actieve of al ingerichte oude installatie blijft beschermd. Daar kun je op dezelfde webpagina **Start met opgeslagen API-key** gebruiken, zonder `installation_mode` in YAML te wijzigen. Kies tussen verschillende oude klantkeys niet automatisch; de webinterface laat dan de juiste key invoeren.
+**Herstel van 0.6.2:** GoodWe-configuratieversie 2.3, runtime-uitlezing vóór automatisch toevoegen en behoud van reeds werkende handmatige configuraties. Bij tijdelijk ontbrekende sensoren blijft de installer op de sensorcontrole. De bestaande agent met dezelfde klantkey behoudt zijn handmatig ingevulde instellingen.
 
-Bij de startsituatie uit het 0.6.1-foutlog (gestopte agents, key aanwezig, geen omvormerconfiguratie) begint OneShot automatisch. Het platform komt uit BMS. De agent start na gecontroleerde sensorkoppeling; `start_agent_addons: false` is een oude onderhoudsoptie, geen blokkade voor OneShot. De ongebruikte gestopte agent zonder key wordt niet verwijderd maar start niet meer automatisch op een latere reboot.
+Werk de app echt bij naar **0.6.3** en publiceer de **complete** repository, inclusief GoodWe-integratie **0.9.9.36** en Setup-brug **1.1.0**. Een oude payload wordt eenmalig ververst; dat kan een Core-herstart vragen maar verwijdert geen apparaatconfiguratie. Kies bij een afgeronde taak **Opnieuw controleren**; kies bij beschermd legacy **Start met opgeslagen API-key**. Een aparte actie **Zoek ontbrekende omvormers** is alleen voor daadwerkelijk ontbrekende apparaten. De UI kan een diagnosebestand zonder API-keys opslaan.
 
-**Update de app zelf naar 0.6.2.** Alleen de repositoryinhoud ophalen of de app herstarten vervangt de ingebouwde Python-code niet. Wis geen instellingen of `/data`. Volledige herstel- en testinformatie: `ONESHOT_HERSTEL_0.6.2.md` in de repositoryroot. Eerst op één Raspberry bevestigen; geen fysieke Raspberry-/omvormertest is hier uitgevoerd.
+EMS/BMS blijven ongewijzigd; de eerder geleverde OneShot-serverupdate/migratie moet aanwezig zijn. Volledige instructies: `ONESHOT_HERSTEL_0.6.3.md` in de repositoryroot. Laat werkende integratie en agent staan. Eerst op één Raspberry valideren; geen fysieke Raspberry-/omvormertest uitgevoerd.
 
 ## Bestaande handmatige installer- en updaterdocumentatie
 

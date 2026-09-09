@@ -316,7 +316,7 @@ class ShellIntegrationTests(unittest.TestCase):
         self.assertTrue(config['hassio_api'])
         self.assertTrue(config['homeassistant_api'])
         self.assertEqual(config['hassio_role'], 'manager')
-        self.assertEqual(config['version'], '0.6.2')
+        self.assertEqual(config['version'], '0.6.3')
         self.assertEqual(set(config['options']), set(config['schema']))
         self.assertIn('COPY core_recovery.py /app/core_recovery.py', (self.root/'Dockerfile').read_text())
 

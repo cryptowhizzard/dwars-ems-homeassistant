@@ -1,12 +1,16 @@
 {
   "domain": "dwars_setup",
   "name": "DWARS OneShot Setup",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "config_flow": true,
   "integration_type": "service",
   "iot_class": "local_push",
   "requirements": [],
-  "dependencies": ["websocket_api"],
-  "codeowners": ["@cryptowhizzard"],
+  "dependencies": [
+    "websocket_api"
+  ],
+  "codeowners": [
+    "@cryptowhizzard"
+  ],
   "documentation": "https://github.com/cryptowhizzard/dwars-ems-homeassistant"
 }

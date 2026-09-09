@@ -2,7 +2,8 @@
   "config": {
     "abort": {
       "already_configured": "Gerät ist bereits konfiguriert",
-      "already_in_progress": "Die Konfiguration wird bereits bearbeitet"
+      "already_in_progress": "Die Konfiguration wird bereits bearbeitet",
+      "cannot_read_runtime": "GoodWe responds, but runtime measurements could not be read. No new device configuration was saved."
     },
     "error": {
       "connection_error": "Verbindung fehlgeschlagen"

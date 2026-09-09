@@ -6,7 +6,8 @@
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
       "already_configured_inverter": "GoodWe-omvormer {serial} is al geconfigureerd op {existing_host}. Het zojuist ingevoerde adres was {attempted_host}.",
       "missing_serial": "Het apparaat antwoordde wel, maar gaf geen serienummer terug.",
-      "identity_changed": "De identiteit van de omvormer veranderde tijdens het toevoegen. Start de detectie opnieuw of vul het IP-adres handmatig in."
+      "identity_changed": "De identiteit van de omvormer veranderde tijdens het toevoegen. Start de detectie opnieuw of vul het IP-adres handmatig in.",
+      "cannot_read_runtime": "GoodWe reageert, maar actuele meetwaarden konden niet worden gelezen. Er is geen nieuwe apparaatconfiguratie opgeslagen."
     },
     "error": {
       "connection_error": "[%key:common::config_flow::error::cannot_connect%]"

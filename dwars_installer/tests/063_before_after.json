@@ -1,0 +1,59 @@
+{
+  "scope": "Production helper/method bodies with local test doubles. Not actual Home Assistant, Supervisor, Modbus or Raspberry hardware.",
+  "0.6.2": {
+    "flow_version": [
+      1,
+      2
+    ],
+    "major_2_accepted_by_HA_version_guard": false,
+    "identity_without_runtime": {
+      "result": "create_entry",
+      "reason": null,
+      "runtime_read_count": 0
+    },
+    "loaded_manual_rediscovery": {
+      "configuration_changed": true,
+      "registry_writes": 1,
+      "reload_scheduled": 1,
+      "reload_awaited": 0
+    },
+    "setup_reads_persisted_values": {
+      "protocol": "UDP",
+      "port": 8899,
+      "family": "ET",
+      "comm_addr": 0,
+      "timeout": 1,
+      "retries": 10
+    },
+    "unavailable_sensor_error": "Entiteit nog niet beschikbaar: sensor.accu_percentage",
+    "stage_after_unavailable_sensor": "discover"
+  },
+  "0.6.3": {
+    "flow_version": [
+      2,
+      3
+    ],
+    "major_2_accepted_by_HA_version_guard": true,
+    "identity_without_runtime": {
+      "result": "abort",
+      "reason": "cannot_read_runtime",
+      "runtime_read_count": 2
+    },
+    "loaded_manual_rediscovery": {
+      "configuration_changed": false,
+      "registry_writes": 0,
+      "reload_scheduled": 0,
+      "reload_awaited": 0
+    },
+    "setup_reads_persisted_values": {
+      "protocol": "UDP",
+      "port": 8899,
+      "family": "ET",
+      "comm_addr": 247,
+      "timeout": 4,
+      "retries": 10
+    },
+    "unavailable_sensor_error": "Entiteit nog niet beschikbaar: sensor.accu_percentage",
+    "stage_after_unavailable_sensor": "mapping"
+  }
+}

@@ -27,11 +27,15 @@ from xml.etree import ElementTree as ET
 
 from goodwe import Inverter, InverterError, connect
 from goodwe.const import GOODWE_TCP_PORT, GOODWE_UDP_PORT
-from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PROTOCOL
+from homeassistant.const import CONF_HOST, CONF_PORT, CONF_PROTOCOL, CONF_SCAN_INTERVAL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
+    CONF_DWARS_MANAGED,
+    CONF_AUTO_LOAD_CONTROL,
+    CONF_KEEP_ALIVE,
+    DEFAULT_SCAN_INTERVAL,
     CONF_DISCOVERY_NAME,
     CONF_MAC,
     CONF_MODBUS_ID,
@@ -634,20 +638,54 @@ def build_updated_entry_options(
     return options
 
 
+def entry_is_loaded(entry) -> bool:
+    """Compare enum values, not their representation across HA versions."""
+    state = getattr(entry, "state", "")
+    return str(getattr(state, "value", state)).lower() == "loaded"
+
+
+def entry_is_dwars_managed(entry) -> bool:
+    """Recognize new imports and the narrowly identified 0.6.x import format."""
+    return bool(entry.data.get(CONF_DWARS_MANAGED)) or (
+        getattr(entry, "source", "") == "import"
+        and entry.data.get(CONF_AUTO_LOAD_CONTROL) is False
+    )
+
+
+def complete_entry_data(current_data: dict[str, Any]) -> dict[str, Any]:
+    """Fill missing/null settings only. Never turn a schema migration into a scan."""
+    data = dict(current_data)
+    defaults = {
+        CONF_PROTOCOL: "UDP", CONF_KEEP_ALIVE: False,
+        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+        CONF_NETWORK_RETRIES: DEFAULT_NETWORK_RETRIES,
+        CONF_NETWORK_TIMEOUT: DEFAULT_NETWORK_TIMEOUT,
+        CONF_MODBUS_ID: DEFAULT_MODBUS_ID,
+    }
+    if data.get(CONF_PORT) == GOODWE_TCP_PORT:
+        defaults[CONF_PROTOCOL] = "TCP"
+    for key, value in defaults.items():
+        if data.get(key) is None:
+            data[key] = value
+    if data.get(CONF_PORT) is None:
+        data[CONF_PORT] = default_port_for_protocol(data[CONF_PROTOCOL])
+    if not data.get(CONF_MODEL_FAMILY):
+        data[CONF_MODEL_FAMILY] = "none"
+    return data
+
+
 def entry_connection_options(
     entry_data: dict[str, Any], entry_options: dict[str, Any]
 ) -> dict[str, Any]:
-    """Extract connection options from a GoodWe config entry."""
-    protocol = entry_options.get(
-        CONF_PROTOCOL, entry_data.get(CONF_PROTOCOL, "UDP")
-    )
+    """Options override data, but legacy null values must not mask defaults."""
+    values = complete_entry_data(entry_data)
+    values.update({k: v for k, v in entry_options.items() if v is not None})
+    values = complete_entry_data(values)
     return {
-        "protocol": protocol,
-        "port": entry_options.get(CONF_PORT, entry_data.get(CONF_PORT)),
-        "family": entry_options.get(
-            CONF_MODEL_FAMILY, entry_data.get(CONF_MODEL_FAMILY)
-        ),
-        "comm_addr": entry_options.get(CONF_MODBUS_ID, DEFAULT_MODBUS_ID),
-        "timeout": entry_options.get(CONF_NETWORK_TIMEOUT, DEFAULT_NETWORK_TIMEOUT),
-        "retries": entry_options.get(CONF_NETWORK_RETRIES, DEFAULT_NETWORK_RETRIES),
+        "protocol": values[CONF_PROTOCOL],
+        "port": values[CONF_PORT],
+        "family": values[CONF_MODEL_FAMILY],
+        "comm_addr": values[CONF_MODBUS_ID],
+        "timeout": values[CONF_NETWORK_TIMEOUT],
+        "retries": values[CONF_NETWORK_RETRIES],
     }

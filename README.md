@@ -1,8 +1,12 @@
-# DWARS OneShot-release 0.6.2
+# DWARS OneShot-release 0.6.3
 
-**Correctie 0.6.2:** bestaande API-key automatisch hergebruiken bij onafgeronde onboarding; geen onterechte `manual`-route door alleen die key. Starten vanuit de webinterface zonder YAML-omweg. Volledige agentopties en expliciete configuratie-/startfouten. Zie [ONESHOT_HERSTEL_0.6.2.md](ONESHOT_HERSTEL_0.6.2.md). Alleen het GitHub-pakket wijzigt; eerder geleverde EMS/BMS blijven vereist en ongewijzigd.
+**Herstel voor GoodWe-configuratie en hervatten na handmatige installatie.** Flow-/migratieversies zijn consistent; automatisch toevoegen vereist echte meetdata; een werkende handmatige omvormer en agent worden hergebruikt. Sensorproblemen leiden niet meer tot opnieuw installeren van een aanwezige omvormer.
 
-Nieuwe ingang: **DWARS OneShot Installer & Updater**, met API-key-invoer via Home Assistant Ingress. Zie [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md) voor de verplichte EMS/BMS-migratie, veilige uitrolvolgorde, hervatting na herstart en beperkingen bij meerdere batterijsystemen. Zie [ONESHOT_TESTRAPPORT.md](ONESHOT_TESTRAPPORT.md) voor de uitgevoerde controles. Deze release eerst op een test-Raspberry valideren.
+Begin bij [ONESHOT_HERSTEL_0.6.3.md](ONESHOT_HERSTEL_0.6.3.md) voor herstel op een reeds werkende Raspberry. Verwijder geen integratie, agent of opgeslagen key. Alleen het GitHub-pakket verandert; de eerdere EMS/BMS-OneShot-update blijft vereist.
+
+Versies: installer **0.6.3**, GoodWe-integratie **0.9.9.36**, DWARS Setup **1.1.0**. Zie het [testrapport](ONESHOT_HERSTEL_0.6.3_TESTRAPPORT.md) voor 213 lokale tests en de grenzen: geen fysieke HA/Supervisor-/omvormertest. Eerst één Raspberry valideren.
+
+Voor een nieuwe installatie: open de OneShot-webinterface en voer de API-key in. Voor serververeisten en platformbeperkingen: [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md).
 
 ## Bestaande projectdocumentatie
 
@@ -19,7 +23,7 @@ Home Assistant add-on repository voor DWARS EMS componenten, GoodWe en SolarEdge
 - `custom_components/goodwe` — aangepaste GoodWe custom integration met discovery, MAC-opslag en IP-herstel.
 - `custom_components/solaredge_modbus_multi` — SolarEdge Modbus Multi met DWARS DHCP/MAC/IP-herstel.
 
-## Installatie
+## Historische handmatige installatie (niet de OneShot-route)
 
 1. Voeg deze repository toe in Home Assistant:
 
