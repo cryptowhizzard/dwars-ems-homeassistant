@@ -1,6 +1,6 @@
 {
   "name": "GoodWe Agent",
-  "version": "1.8.7",
+  "version": "1.8.7.1",
   "slug": "goodwe_agent",
   "description": "GoodWe bridge voor DWARS/MetDeZon BMS met entity-detectie, hoofdzekeringgestuurde charge-blockdrempels en veilige legacy options-migratie via DWARS Installer.",
   "startup": "services",
