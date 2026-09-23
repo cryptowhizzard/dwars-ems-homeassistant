@@ -2,12 +2,15 @@
 from __future__ import annotations
 import asyncio
 import logging
+import time
 import voluptuous as vol
 from homeassistant.components import websocket_api
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 DOMAIN = "dwars_setup"
-BRIDGE_VERSION = "1.1.0"
+BRIDGE_VERSION = "1.2.0"
+DISCOVERY_TIMEOUT = 1200
 _LOGGER = logging.getLogger(__name__)
 DOMAINS = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi"}
 
@@ -56,6 +59,12 @@ def inventory(hass):
                     "state": str(getattr(entry.state, "value", entry.state)),
                     "reason": str(getattr(entry, "reason", "") or "")[:400],
                     "disabled_by": str(getattr(entry, "disabled_by", "") or ""),
+                    "component_loaded": domain in hass.config.components,
+                    "source": entry.source,
+                    "connection": {key: entry.options.get(key, entry.data.get(key)) for key in (
+                        "host", "port", "protocol", "model_family", "modbus_id",
+                        "network_timeout", "network_retries", "keep_alive", "scan_interval",
+                    ) if isinstance(entry.options.get(key, entry.data.get(key)), (str, int, float, bool))},
                     "config_version": entry.version,
                     "config_minor_version": entry.minor_version,
                     "entities": snapshots,
@@ -67,23 +76,41 @@ async def _scan(hass, profile):
     data = hass.data[DOMAIN]
     data["status"] = "running"
     data["error"] = ""
+    data["phase"] = "scanning_and_loading"
+    data["started_monotonic"] = time.monotonic()
+    data["finished_monotonic"] = None
     try:
         domain = DOMAINS[profile["platform"]]
         result = await asyncio.wait_for(hass.config_entries.flow.async_init(
-            domain, context={"source": "import"},
+            # This parent MUST NOT be an import. HA's first-domain setup
+            # waits for pending imports; its child imports await that setup.
+            domain, context={"source": "system"},
             data={"dwars_discover": True, "hosts": profile.get("hosts", []),
                   "unit_ids": profile.get("unit_ids", [1])},
-        ), timeout=1200)
+        ), timeout=DISCOVERY_TIMEOUT)
         if result.get("reason") != "dwars_scan_complete":
             raise RuntimeError("Ontdekking kon niet worden afgerond: " + str(result.get("reason") or result.get("errors") or result.get("type")))
         data["status"] = "done"
+        data["phase"] = "scan_finished"
+    except asyncio.TimeoutError:
+        data["status"] = "error"
+        data["phase"] = "timeout"
+        data["error"] = ("Ontdekking/toevoegen niet afgerond binnen " + str(DISCOVERY_TIMEOUT)
+                         + " seconden. Bewaar het diagnosebestand en controleer het Core-log; "
+                         "een gevonden IP is nog geen geladen omvormer.")
+        _LOGGER.error("DWARS discovery timed out after %s seconds", DISCOVERY_TIMEOUT)
     except asyncio.CancelledError:
         data["status"] = "interrupted"
+        data["phase"] = "interrupted"
+        data["error"] = "Ontdekking onderbroken; configuraties en instellingen blijven behouden."
         raise
     except Exception as err:
         data["status"] = "error"
-        data["error"] = str(err)[:500]
+        data["phase"] = "error"
+        data["error"] = (str(err) or type(err).__name__)[:500]
         _LOGGER.exception("DWARS automatic discovery failed")
+    finally:
+        data["finished_monotonic"] = time.monotonic()
 
 
 @websocket_api.websocket_command({vol.Required("type"): "dwars_setup/run", vol.Required("profile"): dict})
@@ -125,8 +152,21 @@ async def ws_status(hass, connection, msg):
         connection.send_error(msg["id"], "unauthorized", "Administrator required")
         return
     data = hass.data[DOMAIN]
-    connection.send_result(msg["id"], {"bridge_version": BRIDGE_VERSION, "status": data.get("status", "idle"),
-                                     "error": data.get("error", ""), "devices": inventory(hass)})
+    # Only expose lifecycle metadata, never raw flow context/data or options.
+    flows = []
+    for domain in DOMAINS.values():
+        for flow in hass.config_entries.flow.async_progress_by_handler(domain, include_uninitialized=True):
+            flows.append({"domain": domain, "source": flow.get("context", {}).get("source", ""),
+                          "step_id": flow.get("step_id", "")})
+    started = data.get("started_monotonic")
+    elapsed = max(0, int((data.get("finished_monotonic") or time.monotonic()) - started)) if started is not None else 0
+    connection.send_result(msg["id"], {
+        "bridge_version": BRIDGE_VERSION, "ha_version": HA_VERSION,
+        "status": data.get("status", "idle"), "phase": data.get("phase", "idle"),
+        "elapsed_seconds": elapsed, "flow_source": "system", "flows": flows,
+        "loaded_domains": {d: d in hass.config.components for d in DOMAINS.values()},
+        "error": data.get("error", ""), "devices": inventory(hass),
+    })
 
 
 @websocket_api.websocket_command({vol.Required("type"): "dwars_setup/enable", vol.Required("entities"): [str]})

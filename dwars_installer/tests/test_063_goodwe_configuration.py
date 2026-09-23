@@ -83,7 +83,7 @@ def make_flow(entries=(), inverter=None, root=GW):
     def update(e, **kw):
         for key,value in kw.items():setattr(e,key,MappingProxyType(value) if key in {'data','options'} else value)
     registry=NS(async_entries=lambda domain:list(entries),
-                async_update_entry=Mock(side_effect=update), async_reload=AsyncMock(return_value=True),
+                async_update_entry=Mock(side_effect=update), async_reload=AsyncMock(return_value=True), async_schedule_reload=Mock(),
                 flow=NS(async_init=AsyncMock(return_value={'type':'create_entry'})))
     flow=NS(hass=NS(config_entries=registry,async_create_task=Mock()),
             async_set_unique_id=AsyncMock(), _abort_if_unique_id_configured=Mock(),
@@ -96,6 +96,10 @@ def make_flow(entries=(), inverter=None, root=GW):
     for name in ('_configured_entries','_entry_for_serial','async_handle_successful_connection','async_step_import'):
         fn=source_function(root/'config_flow.py',name,ns,'GoodweFlowHandler')
         setattr(flow,name,MethodType(fn,flow))
+    # The bulk scan is now a system flow, not a nested YAML import. The
+    # optional branch retains the baseline loader for the before/after proof.
+    if 'async def async_step_system(' in (root/'config_flow.py').read_text():
+        flow.async_step_system=MethodType(source_function(root/'config_flow.py','async_step_system',ns,'GoodweFlowHandler'),flow)
     return flow,ns,inv
 
 
@@ -178,7 +182,8 @@ class ConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(e.options['port'],502);self.assertEqual(e.options['protocol'],'TCP')
         self.assertEqual(e.options['custom'],'keep');self.assertEqual(e.options['modbus_id'],247)
         self.assertEqual(e.data['network_timeout'],6)
-        f.hass.config_entries.async_reload.assert_awaited_once_with(e.entry_id)
+        f.hass.config_entries.async_schedule_reload.assert_called_once_with(e.entry_id)
+        f.hass.config_entries.async_reload.assert_not_awaited()
         inv.read_runtime_data.assert_awaited_once()
     async def test_failed_own_import_runtime_failure_preserves_old_settings(self):
         e=entry(source='import',state='setup_error',data={'host':'192.0.2.10','port':8899,'auto_load_control':False})
@@ -189,18 +194,18 @@ class ConfigurationTests(unittest.IsolatedAsyncioTestCase):
     async def test_discovery_hosts_deduplicated(self):
         f,ns,_=make_flow()
         f._async_discover_unconfigured.return_value={'GW123':NS(host='192.0.2.10',protocol='TCP',port=502,model_family='ET',mac=None,serial_number='GW123')}
-        result=await f.async_step_import({'dwars_discover':True,'hosts':['192.0.2.10','192.0.2.10']})
+        result=await f.async_step_system({'dwars_discover':True,'hosts':['192.0.2.10','192.0.2.10']})
         self.assertEqual(result['reason'],'dwars_scan_complete')
         self.assertEqual(f.hass.config_entries.flow.async_init.await_count,1)
     async def test_failed_owned_entry_included_for_bounded_repair(self):
         e=entry(source='import',state='setup_error',data={'host':'192.0.2.10','auto_load_control':False})
         f,ns,_=make_flow([e])
-        await f.async_step_import({'dwars_discover':True})
+        await f.async_step_system({'dwars_discover':True})
         f.hass.config_entries.flow.async_init.assert_awaited_once()
         self.assertEqual(f.hass.config_entries.flow.async_init.call_args.kwargs['data']['expected_serial'],'GW123')
     async def test_discovery_keeps_existing_user_entry_out_of_repair_list(self):
         f,ns,_=make_flow([entry(state='setup_error')])
-        await f.async_step_import({'dwars_discover':True})
+        await f.async_step_system({'dwars_discover':True})
         f.hass.config_entries.flow.async_init.assert_not_awaited()
 
 

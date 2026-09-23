@@ -273,7 +273,10 @@ class OneShot:
             self.log("Installatiesoftware vernieuwen; bestaande omvormers, agents, API-key en koppelingen blijven behouden.")
             self.save(installer_version=VERSION, stage="payload", payload_root=None,
                       payload_version=None, resumed_from_stage=old_stage,
-                      restart_needed=False, restart_requested_at=None,
+                      # A previous bridge task may still hold Core's import
+                      # barrier even when files were copied by a fleet update.
+                      # One persisted restart on release change clears it.
+                      restart_needed=True, restart_requested_at=None,
                       restart_acknowledged=False, restart_requests=0)
         else:
             self.save(installer_version=VERSION)
@@ -281,9 +284,11 @@ class OneShot:
     def check_payload(self, root):
         # Never resume with a stale remote/cached component while claiming the
         # new installer release. This check runs before touching /config.
-        minimums = {"dwars_setup": (1, 1, 0)}
+        minimums = {"dwars_setup": (1, 2, 0)}
         if self.profile["platform"] == "goodwe":
-            minimums["goodwe"] = (0, 9, 9, 36)
+            minimums["goodwe"] = (0, 9, 9, 37)
+        elif self.profile["platform"] == "solaredge":
+            minimums["solaredge_modbus_multi"] = (3, 2, 8)
         for component, minimum in minimums.items():
             manifest = load_json(root / "custom_components" / component / "manifest.json")
             try:
@@ -292,7 +297,7 @@ class OneShot:
                 actual = ()
             if actual < minimum:
                 raise Blocked("De repository bevat nog oude " + component
-                              + "-installatiecode. Publiceer het volledige 0.6.3-pakket in de ingestelde GitHub-branch. Niets overschreven.")
+                              + "-installatiecode. Publiceer het volledige 0.6.4-pakket in de ingestelde GitHub-branch. Niets overschreven.")
 
     async def payload_stage(self):
         root_path = self.state.get("payload_root")
@@ -409,7 +414,7 @@ class OneShot:
         for _ in range(30):
             try:
                 status = await self.ws("dwars_setup/status")
-                if status.get("bridge_version") != "1.1.0":
+                if status.get("bridge_version") != "1.2.0":
                     raise Blocked("Home Assistant gebruikt nog de oude installatiebrug; de nieuwe component moet eerst geladen zijn. Geen omvormerinstellingen gewijzigd.")
                 return
             except APIError:
@@ -421,7 +426,7 @@ class OneShot:
             "serial": d.get("serial", ""), "host": d.get("host", ""), "model": d.get("model", ""),
             "entry_id": d.get("entry_id", ""), "state": d.get("state", ""),
             "reason": d.get("reason", ""),
-            "role": "besturing" if selected and d.get("serial") == selected.get("serial") else "monitoring",
+            "role": ("besturing" if d.get("serial") == selected.get("serial") else "monitoring") if selected else "nog niet bepaald",
         } for d in devices if d.get("platform") == self.profile["platform"]])
 
     def inventory_satisfies_profile(self, devices):
@@ -458,6 +463,13 @@ class OneShot:
                 return
             if result.get("status") in {"error", "interrupted"}:
                 raise RuntimeError(result.get("error") or "Ontdekking onderbroken; wordt hervat.")
+            elapsed = result.get("elapsed_seconds")
+            if isinstance(elapsed, (int, float)) and _ % 6 == 0:
+                pending = sum(d.get("state") == "not_loaded" for d in result.get("devices", []))
+                detail = (f"Omvormers scannen en laden ({int(elapsed)} s). "
+                          + (f"{pending} configuratie(s) aangemaakt; Home Assistant heeft die nog niet geladen."
+                             if pending else "Wachten op afronding van de installatiebrug."))
+                self.save(message=detail)
             await asyncio.sleep(5)
         raise RuntimeError("Ontdekking duurt te lang. Voortgang blijft bewaard.")
 
@@ -1003,12 +1015,26 @@ class OneShot:
         try:
             live = await self.ws("dwars_setup/status")
             diagnostic["bridge_version"] = live.get("bridge_version")
+            diagnostic["ha_version"] = live.get("ha_version")
+            diagnostic["bridge_status"] = live.get("status")
+            diagnostic["bridge_phase"] = live.get("phase")
+            diagnostic["bridge_elapsed_seconds"] = live.get("elapsed_seconds")
+            diagnostic["bridge_error"] = self.safe(live.get("error", ""))
+            diagnostic["flow_source"] = live.get("flow_source")
+            diagnostic["loaded_domains"] = {key: bool(value) for key, value in live.get("loaded_domains", {}).items()
+                                             if key in {"goodwe", "solaredge_modbus_multi"}}
+            diagnostic["flows"] = [{key: item.get(key) for key in ("domain", "source", "step_id")}
+                                   for item in live.get("flows", [])[:64]]
             for device in live.get("devices", []):
                 row = {key: device.get(key) for key in (
                     "platform", "serial", "host", "entry_id", "model", "state",
-                    "config_version", "config_minor_version", "disabled_by",
+                    "config_version", "config_minor_version", "disabled_by", "component_loaded", "source",
                 )}
                 row["reason"] = self.safe(device.get("reason", ""))
+                row["connection"] = {key: value for key, value in device.get("connection", {}).items()
+                                     if key in {"host", "port", "protocol", "model_family", "modbus_id",
+                                                "network_timeout", "network_retries", "keep_alive", "scan_interval"}
+                                     and isinstance(value, (str, int, float, bool))}
                 row["entities"] = [{key: entity.get(key) for key in (
                     "entity_id", "unique_id", "state", "disabled_by", "last_reported",
                 )} for entity in device.get("entities", [])]

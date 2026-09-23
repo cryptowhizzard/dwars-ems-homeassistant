@@ -1,16 +1,25 @@
 {
-  "release_date": "2026-09-08",
-  "installer_version": "0.6.2",
+  "release_date": "2026-09-23",
+  "installer_version": "0.6.4",
   "protocol_version": 1,
-  "python_tests_passed": 154,
-  "new_regression_tests": 28,
-  "test_transport": "local HTTP/WebSocket contract doubles; real Bash/curl/aiohttp and OneShot worker",
+  "component_versions": {
+    "goodwe": "0.9.9.37",
+    "solaredge_modbus_multi": "3.2.8",
+    "dwars_setup": "1.2.0"
+  },
+  "python_tests_passed": 237,
+  "new_regression_tests": 24,
+  "test_transport": "local HTTP/WebSocket doubles and production-method tests with a HA Core 2026.9.0 import-barrier contract model; NOT a full Home Assistant runtime",
+  "old_code_deadlock_reproduced": true,
   "hardware_tested": false,
+  "real_home_assistant_tested": false,
   "real_supervisor_tested": false,
   "arm_docker_build_tested": false,
   "live_database_tested": false,
   "ems_bms_changed": false,
   "php_retested_this_release": false,
   "server_packages_required": "EMS/BMS OneShot 20260908 + migrations/20260908_oneshot.php",
-  "report": "ONESHOT_HERSTEL_0.6.2.md"
+  "report": "ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md",
+  "recovery_guide": "ONESHOT_HERSTEL_0.6.4.md",
+  "reproduction": "ONESHOT_HERSTEL_0.6.4_REPRODUCTIE.json"
 }

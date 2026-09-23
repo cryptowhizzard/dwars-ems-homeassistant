@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
-VERSION = "0.6.3"
+VERSION = "0.6.4"
 DOMAIN = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi", "other": None}
 AGENT = {"goodwe": "goodwe_agent", "solaredge": "solaredge_agent", "other": "dwars_addon"}
 

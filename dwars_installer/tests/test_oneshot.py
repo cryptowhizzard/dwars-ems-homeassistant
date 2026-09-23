@@ -170,7 +170,7 @@ class Simulator(OneShot):
         raise AssertionError((method,path))
     async def ws(self,command,**kwargs):
         if command in {'dwars_setup/status','dwars_setup/run'}:
-            return {'bridge_version':'1.1.0','status':'done','devices':self.remote['devices']}
+            return {'bridge_version':'1.2.0','status':'done','devices':self.remote['devices']}
         if command=='dwars_setup/enable':return {'enabled':kwargs['entities']}
         raise AssertionError(command)
     async def sup(self,method,path,payload=None,**kwargs):

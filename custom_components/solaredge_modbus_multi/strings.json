@@ -42,7 +42,8 @@
       "already_configured": "Host and port is already configured in another hub.",
       "reconfigure_successful": "Re-configuration was successful",
       "updated_ip": "The stored SolarEdge IP address was updated from DHCP discovery.",
-      "not_solaredge": "The discovered device did not respond as a SolarEdge Modbus inverter."
+      "not_solaredge": "The discovered device did not respond as a SolarEdge Modbus inverter.",
+      "dwars_scan_requires_system": "Update the DWARS setup bridge to 1.2.0 and restart Home Assistant. The legacy bulk import can block integration setup."
     }
   },
   "options": {

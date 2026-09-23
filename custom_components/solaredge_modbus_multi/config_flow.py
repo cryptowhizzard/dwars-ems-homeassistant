@@ -142,33 +142,45 @@ class SolaredgeModbusMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return data, unique_id
 
+    async def async_step_system(self, data: dict[str, Any]) -> FlowResult:
+        """Run DWARS bulk discovery outside the YAML-import initialization barrier.
+
+        Each device is still added by a normal import flow. Making the parent an
+        import flow as well deadlocks the FIRST domain setup: HA waits for every
+        pending import, while the parent waits for its child's setup to finish.
+        """
+        if not data or not data.get("dwars_discover"):
+            return self.async_abort(reason="cannot_connect")
+        units = data.get("unit_ids") or [1]
+        discovered: dict[tuple[str, int], dict[str, Any]] = {}
+        for port in (1502, 502):
+            for unit in units:
+                for item in await async_scan_solaredge_modbus(self.hass, port=port, unit_id=int(unit), limit=64):
+                    key = (str(item["host"]), int(item["port"]))
+                    candidate = discovered.setdefault(key, {**item, "units": []})
+                    candidate["units"].append(int(unit))
+                for host in data.get("hosts", []):
+                    if await async_probe_solaredge_modbus(host, port=port, unit_id=int(unit)):
+                        candidate = discovered.setdefault((host, port), {"host": host, "port": port, "units": []})
+                        candidate["units"].append(int(unit))
+        failures = []
+        for item in discovered.values():
+            result = await self.hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": "import"},
+                data={CONF_HOST: item["host"], CONF_PORT: item["port"],
+                      CONF_NAME: "SolarEdge " + str(item["host"]),
+                      ConfName.DEVICE_LIST: ",".join(str(i) for i in sorted(set(item["units"]))),
+                      CONF_MAC: item.get("mac")},
+            )
+            if result.get("type") == "abort" and result.get("reason") != "already_configured":
+                failures.append(str(result.get("reason")))
+        return self.async_abort(reason="cannot_connect" if failures else "dwars_scan_complete")
+
     async def async_step_import(self, data: dict[str, Any]) -> FlowResult:
         """Unattended DWARS import; enable battery/storage entities for NEW entries."""
         if data.get("dwars_discover"):
-            units = data.get("unit_ids") or [1]
-            discovered: dict[tuple[str, int], dict[str, Any]] = {}
-            for port in (1502, 502):
-                for unit in units:
-                    for item in await async_scan_solaredge_modbus(self.hass, port=port, unit_id=int(unit), limit=64):
-                        key = (str(item["host"]), int(item["port"]))
-                        candidate = discovered.setdefault(key, {**item, "units": []})
-                        candidate["units"].append(int(unit))
-                    for host in data.get("hosts", []):
-                        if await async_probe_solaredge_modbus(host, port=port, unit_id=int(unit)):
-                            candidate = discovered.setdefault((host, port), {"host": host, "port": port, "units": []})
-                            candidate["units"].append(int(unit))
-            failures = []
-            for item in discovered.values():
-                result = await self.hass.config_entries.flow.async_init(
-                    DOMAIN, context={"source": "import"},
-                    data={CONF_HOST: item["host"], CONF_PORT: item["port"],
-                          CONF_NAME: "SolarEdge " + str(item["host"]),
-                          ConfName.DEVICE_LIST: ",".join(str(i) for i in sorted(set(item["units"]))),
-                          CONF_MAC: item.get("mac")},
-                )
-                if result.get("type") == "abort" and result.get("reason") != "already_configured":
-                    failures.append(str(result.get("reason")))
-            return self.async_abort(reason="cannot_connect" if failures else "dwars_scan_complete")
+            # Reject an old bridge explicitly; never enter a nested import.
+            return self.async_abort(reason="dwars_scan_requires_system")
         errors: dict[str, str] = {}
         normalized, unique = await self._async_validate_and_normalize(data, errors)
         if not normalized or not unique:

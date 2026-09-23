@@ -197,7 +197,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(load_json(self.one.credentials_path),{'api_key':'saved-key'})
         self.assertEqual(self.one.state['restart_requests'],0)
         before=deepcopy(self.one.state);self.one.prepare_release();self.assertEqual(self.one.state,before)
-        self.assertTrue((self.path/'oneshot_before_0.6.3.json').is_file())
+        self.assertTrue((self.path/'oneshot_before_0.6.4.json').is_file())
     def test_fresh_install_stays_profile(self):
         self.one.prepare_release();self.assertEqual(self.one.state['stage'],'profile')
     def test_updated_payload_passes(self):self.one.check_payload(ROOT)

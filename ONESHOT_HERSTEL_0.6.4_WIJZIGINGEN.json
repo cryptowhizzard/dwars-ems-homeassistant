@@ -1,0 +1,213 @@
+{
+  "from_version": "0.6.3",
+  "to_version": "0.6.4",
+  "date": "2026-09-23",
+  "entries": 34,
+  "note": "SHA-256 over exact uncompressed bytes. This manifest does not hash itself. Original unmodified files remain in the full archive.",
+  "changes": [
+    {
+      "path": "ONESHOT_HERSTEL_0.6.4.md",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "d19191f8846da2195ea2cec69eb9d426596863dfc8a9495cd2eff5560beb1e95"
+    },
+    {
+      "path": "ONESHOT_HERSTEL_0.6.4_CONTROLES.json",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "6fbecd94f2bd285ebc76b8ab581af9c229fe3ca2412005a2d67b9c6b14af1212"
+    },
+    {
+      "path": "ONESHOT_HERSTEL_0.6.4_REPRODUCTIE.json",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "01d45dc6e95ac5ad447882de7e6115a2c0f217227fa8ee9fa20876cc7a59012a"
+    },
+    {
+      "path": "ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "2729e657a21e5553d5c9430f23bd1edda94d67d01db8a04c0160bd9762c906f8"
+    },
+    {
+      "path": "ONESHOT_INSTALLATIE.md",
+      "change": "modified",
+      "sha256_before": "1e7bbb62376a780b8d31c86c28ae4b3fd9f1b82c7ce5f7e6813866a626bc2409",
+      "sha256_after": "5ded8b77a42ced9d04433382007fa141b9479576f5b0cf7f56e301a07970b59a"
+    },
+    {
+      "path": "ONESHOT_TESTRAPPORT.md",
+      "change": "modified",
+      "sha256_before": "3f5e80fc949ff7aafb7f60bd9d0d0fbd5116a2ca0faf1a51c5262b0791c31e35",
+      "sha256_after": "0d974ad9b9449be4f8cbd417f0809e0f7e6e271b063f9a6b4b8c198229f2da07"
+    },
+    {
+      "path": "README.md",
+      "change": "modified",
+      "sha256_before": "17b343ca28e00320f510297457e6291f379aba937f9e2f19386804d470d25003",
+      "sha256_after": "21ad5ddecd464a75712c61682d40a6b46483d6a621a6b6cc97e6d1010b676f40"
+    },
+    {
+      "path": "custom_components/dwars_setup/__init__.py",
+      "change": "modified",
+      "sha256_before": "a6aa40b6aa055bd77293958729b7c7ca5c7268c77e83fec65162c9810df3a299",
+      "sha256_after": "4f240596586c543f1fd929f008e5bf03a2186537ddc439851df70a64bb380818"
+    },
+    {
+      "path": "custom_components/dwars_setup/manifest.json",
+      "change": "modified",
+      "sha256_before": "1ac5f61c693d5e3df305caff2e5bdc82cbe12577ef966bbda612229c659e0bcd",
+      "sha256_after": "c4e9608ba6ef3a225712fed31325b993b1f846ac91169fa5603c69f418c0abed"
+    },
+    {
+      "path": "custom_components/goodwe/config_flow.py",
+      "change": "modified",
+      "sha256_before": "ee30783c105277b4c135d7ad8b4a575219381697ccfb068a09542b5c0c834b6e",
+      "sha256_after": "7acc7f14bba43f908741610b4aee05152fa99bde171aa2e92287632c02a672e4"
+    },
+    {
+      "path": "custom_components/goodwe/manifest.json",
+      "change": "modified",
+      "sha256_before": "0f811d4ae68b8019af7d127fd8ccf9d99798a2902ec73f371444df696350859f",
+      "sha256_after": "4cd26949b9b9970e09555d3072c576c762d15a382156ec438854ab8f443cfb32"
+    },
+    {
+      "path": "custom_components/goodwe/strings.json",
+      "change": "modified",
+      "sha256_before": "58e37e2dfa5a7f6dfd5b8da5f57198c10883aa55c9b2c519689d9a129be4a189",
+      "sha256_after": "f91402f5bb5a3c6e6ceba6d964950add670868385eab1447714201b70a56977f"
+    },
+    {
+      "path": "custom_components/goodwe/translations/en.json",
+      "change": "modified",
+      "sha256_before": "582ad0c24da7d4560cc041a7f117ad23370bf8545219e3143c77dec92718f87b",
+      "sha256_after": "cc1991bb92b64ae79c1beddd07d2b2f94a0a484e5561e304a39ccd63038db7f1"
+    },
+    {
+      "path": "custom_components/goodwe/translations/nl.json",
+      "change": "modified",
+      "sha256_before": "525bba6a4738b310343d3bb1affbe2807c7f9c3b51c389be40e250183a023bee",
+      "sha256_after": "ae0ad4c6c35886c5ede09a1e223ac6ca9889183f9cde70d10228d851dacccc4c"
+    },
+    {
+      "path": "custom_components/solaredge_modbus_multi/config_flow.py",
+      "change": "modified",
+      "sha256_before": "23558632638faca39cd3b5dce3d25896129b394f042017d041002984ef26501c",
+      "sha256_after": "5f273a1459e3e97b159550e7efd282ae9f8643e466c6b01ac98e07b13cb6cb91"
+    },
+    {
+      "path": "custom_components/solaredge_modbus_multi/manifest.json",
+      "change": "modified",
+      "sha256_before": "66910ca8af20316b4e42bfda982e37dbd9a96a6b305ef3ee4d3c1bd6bb6bb494",
+      "sha256_after": "c42950d56abc9c4da672108f7cb820951d52c36e52d1a696d2b5ee8e0d7e4dc7"
+    },
+    {
+      "path": "custom_components/solaredge_modbus_multi/strings.json",
+      "change": "modified",
+      "sha256_before": "21a5c89c2df394c77116ae36f5208930b92e54cd63bd0dc97d041951b0f51972",
+      "sha256_after": "5c200255a24d013c5675fba876fd1296e60f50e8b8e6229b178f40d36f214cf0"
+    },
+    {
+      "path": "custom_components/solaredge_modbus_multi/translations/en.json",
+      "change": "modified",
+      "sha256_before": "21a5c89c2df394c77116ae36f5208930b92e54cd63bd0dc97d041951b0f51972",
+      "sha256_after": "5c200255a24d013c5675fba876fd1296e60f50e8b8e6229b178f40d36f214cf0"
+    },
+    {
+      "path": "custom_components/solaredge_modbus_multi/translations/nl.json",
+      "change": "modified",
+      "sha256_before": "dfc425b69cf7983dcde25b568d00e86cb6685a44f7cc8baee9fad6688e87d34d",
+      "sha256_after": "d8177c002de28925ba73cddf8e702fc9a93d87e289f76e8720f825305d676b32"
+    },
+    {
+      "path": "dwars_installer/CHANGELOG.md",
+      "change": "modified",
+      "sha256_before": "966c88dd7f9496751f099e9e9d13a3c34a997cf80e8fef87bf65c8bdb5a79692",
+      "sha256_after": "69ef6c0075e8057add5eea0a3f0a59d016de985d1df87ef4cbfb51d84891dd97"
+    },
+    {
+      "path": "dwars_installer/Dockerfile",
+      "change": "modified",
+      "sha256_before": "16bb255a42e128466424135178a534db39b2b0d020ab81d6f2694baa473c78c8",
+      "sha256_after": "c6ca7ee9549f86bf94c95109af4ab51ba4be6002bc34060e9754b860c2c0aab8"
+    },
+    {
+      "path": "dwars_installer/config.json",
+      "change": "modified",
+      "sha256_before": "80d53d790c9670f3dd30b0c5632bc3e4fe09d783777afb0469c12e43ff1bf967",
+      "sha256_after": "6ffee50e55ac95354ab7c99b338ee046594dfbb352f5ce6d0c2b6cf7553deb45"
+    },
+    {
+      "path": "dwars_installer/oneshot.py",
+      "change": "modified",
+      "sha256_before": "a06b5d8d5fe018ff704b730c7170a17d650350c91a0553c246a4658c05879371",
+      "sha256_after": "465eff5c8bc1512b2b7fde68e664817b43f560ccb294b2fcb4a5be129dafebe4"
+    },
+    {
+      "path": "dwars_installer/oneshot_common.py",
+      "change": "modified",
+      "sha256_before": "dd1fd62d3b5d82edba89500510ffed2fdb21b737ba7e5942ebcad1a5dc392f2b",
+      "sha256_after": "1661c255269a2617b7b174ca838930dd00e34a2bd4c34fa0551745154b66b0ac"
+    },
+    {
+      "path": "dwars_installer/run.sh",
+      "change": "modified",
+      "sha256_before": "b84dbdbdad3e08d2b7c6c4725d6975c7a796fa998fd214338db08e756aed28e7",
+      "sha256_after": "146ebfeefce3aa4ce17c908dba17d1b2791a3ccf6f8e4afe0ff345ef997678a9"
+    },
+    {
+      "path": "dwars_installer/tests/test_062_regressions.py",
+      "change": "modified",
+      "sha256_before": "2c5062b14ee80cdb8c57aa513fca1956ff0254c6869bc18ccc88241b47e80215",
+      "sha256_after": "c9cb652d2867edcd2544da7e68c1ca7aa76c0c91e9c7f7e12303a941ec9e827c"
+    },
+    {
+      "path": "dwars_installer/tests/test_063_goodwe_configuration.py",
+      "change": "modified",
+      "sha256_before": "867c4db1050871c6c7e75e4cbec05aee00d4294ddc39e3e1bd08618909aacbcf",
+      "sha256_after": "56f11175fd1e340b8b5e1f1cee6d6adc2cb07366e13e9cc4e0bdfc79ea98dd49"
+    },
+    {
+      "path": "dwars_installer/tests/test_063_resume.py",
+      "change": "modified",
+      "sha256_before": "e0913d2d1ddb380396b079faa863f6e2266854b6c46456a7cb68a0f70a4485af",
+      "sha256_after": "5842c5a2444dc17b9a7c422c41910e0bb9ba3f1e3d6e99abaa4defd040df8eca"
+    },
+    {
+      "path": "dwars_installer/tests/test_064_diagnostics_release.py",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "8f165accd7007f910573c727139ad8c87d1b8729d607d3a981ea415256e1d8f0"
+    },
+    {
+      "path": "dwars_installer/tests/test_064_lifecycle.py",
+      "change": "added",
+      "sha256_before": null,
+      "sha256_after": "036321906f82a2c818b0767307e426c9057fab0ad310aa0cd5f923e5f091f40c"
+    },
+    {
+      "path": "dwars_installer/tests/test_core_recovery.py",
+      "change": "modified",
+      "sha256_before": "e425b62167b1893e50c827a8c8bd75c0d4124530d9b45b394c761c07c87cb214",
+      "sha256_after": "7c954529d7d1bdd1ef5e80df7cefded724990956075e1caf311d9c3bac4e5a50"
+    },
+    {
+      "path": "dwars_installer/tests/test_oneshot.py",
+      "change": "modified",
+      "sha256_before": "d6aca7f7afbcf5abf559f20c46ba02f578328e2039d4b29683e1291cafca27ec",
+      "sha256_after": "551379c792b57340265ce31793a0f0345520a280106a576642b576f4b7c84691"
+    },
+    {
+      "path": "dwars_installer/tests/test_setup_imports.py",
+      "change": "modified",
+      "sha256_before": "642dc19f690ad4e434b16e30e2238f3718598acb021604fefa982fb57d488734",
+      "sha256_after": "6af1450fbc78c13a4a7d69037679a9fac905979ecf4a594111795f11b6c94112"
+    },
+    {
+      "path": "oneshot-release.json",
+      "change": "modified",
+      "sha256_before": "1acbdbfb38067e75b2e86764d6ea788d8ed9fc4cb23a7482ed5d3d2d355b0a0c",
+      "sha256_after": "46ffe8b5024146af282e4b69f3b77a2a55f05d1e086d4c37074a0a8567c6836c"
+    }
+  ]
+}

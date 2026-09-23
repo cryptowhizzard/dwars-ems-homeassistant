@@ -271,6 +271,53 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         title = f"{DEFAULT_NAME} {serial_number}"
         return self.async_create_entry(title=title, data=data)
 
+    async def async_step_system(self, data: dict[str, Any]) -> ConfigFlowResult:
+        """Run DWARS bulk discovery outside the YAML-import initialization barrier.
+
+        Each device is still added by a normal import flow. Making the parent an
+        import flow as well deadlocks the FIRST domain setup: HA waits for every
+        pending import, while the parent waits for its child's setup to finish.
+        """
+        if not data or not data.get("dwars_discover"):
+            return self.async_abort(reason="cannot_connect")
+        discovered = await self._async_discover_unconfigured(include_configured=False)
+        candidates = [
+            {"host": item.host, "protocol": item.protocol or "UDP",
+             "port": item.port, "model_family": item.model_family,
+             "mac": item.mac, "expected_serial": item.serial_number}
+            for item in discovered.values()
+        ]
+        known_hosts = {item["host"] for item in candidates}
+        # Include failed DWARS entries for a bounded repair attempt, but not
+        # manual entries. Healthy configured devices are already in HA.
+        for entry in self._configured_entries():
+            if (entry_is_dwars_managed(entry) and not entry_is_loaded(entry)
+                    and not getattr(entry, "disabled_by", None)):
+                host = str(_entry_value(entry, CONF_HOST, "") or "")
+                if host and host not in known_hosts:
+                    candidates.append({"host": host, "expected_serial": entry.unique_id,
+                                       "protocol": _entry_value(entry, CONF_PROTOCOL, "UDP"),
+                                       "port": _entry_value(entry, CONF_PORT),
+                                       "model_family": _entry_value(entry, CONF_MODEL_FAMILY)})
+                    known_hosts.add(host)
+        for host in data.get("hosts", []):
+            if host not in known_hosts:
+                candidates.append({"host": host})
+                known_hosts.add(host)
+        failures = []
+        for candidate in candidates:
+            result = await self.hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": "import"}, data=candidate,
+            )
+            if result.get("type") != "create_entry" and result.get("reason") not in {
+                "already_configured", "already_configured_inverter", "updated_ip"
+            }:
+                failures.append(candidate["host"] + ": " + str(result.get("reason") or result.get("type")))
+        if failures:
+            _LOGGER.warning("DWARS discovery incomplete: %s", "; ".join(failures))
+            return self.async_abort(reason="cannot_connect")
+        return self.async_abort(reason="dwars_scan_complete")
+
     async def async_step_import(self, data: dict[str, Any]) -> ConfigFlowResult:
         """Add verified inverters, never reconfigure a working/manual entry.
 
@@ -279,44 +326,8 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
         Only our own failed entries may be repaired, after runtime reads succeed.
         """
         if data.get("dwars_discover"):
-            discovered = await self._async_discover_unconfigured(include_configured=False)
-            candidates = [
-                {"host": item.host, "protocol": item.protocol or "UDP",
-                 "port": item.port, "model_family": item.model_family,
-                 "mac": item.mac, "expected_serial": item.serial_number}
-                for item in discovered.values()
-            ]
-            known_hosts = {item["host"] for item in candidates}
-            # Include failed DWARS entries for a bounded repair attempt, but not
-            # manual entries. Healthy configured devices are already in HA.
-            for entry in self._configured_entries():
-                if (entry_is_dwars_managed(entry) and not entry_is_loaded(entry)
-                        and not getattr(entry, "disabled_by", None)):
-                    host = str(_entry_value(entry, CONF_HOST, "") or "")
-                    if host and host not in known_hosts:
-                        candidates.append({"host": host, "expected_serial": entry.unique_id,
-                                           "protocol": _entry_value(entry, CONF_PROTOCOL, "UDP"),
-                                           "port": _entry_value(entry, CONF_PORT),
-                                           "model_family": _entry_value(entry, CONF_MODEL_FAMILY)})
-                        known_hosts.add(host)
-            for host in data.get("hosts", []):
-                if host not in known_hosts:
-                    candidates.append({"host": host})
-                    known_hosts.add(host)
-            failures = []
-            for candidate in candidates:
-                result = await self.hass.config_entries.flow.async_init(
-                    DOMAIN, context={"source": "import"}, data=candidate,
-                )
-                if result.get("type") != "create_entry" and result.get("reason") not in {
-                    "already_configured", "already_configured_inverter", "updated_ip"
-                }:
-                    failures.append(candidate["host"] + ": " + str(result.get("reason") or result.get("type")))
-            if failures:
-                _LOGGER.warning("DWARS discovery incomplete: %s", "; ".join(failures))
-                return self.async_abort(reason="cannot_connect")
-            return self.async_abort(reason="dwars_scan_complete")
-
+            # Reject an old bridge explicitly; never enter a nested import.
+            return self.async_abort(reason="dwars_scan_requires_system")
         host = str(data.get("host") or "").strip()
         try:
             ipaddress.IPv4Address(host)
@@ -336,6 +347,18 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
                                      or getattr(existing, "disabled_by", None)):
             _LOGGER.info("DWARS reuses GoodWe entry %s; connection and options unchanged", existing.entry_id)
             return self.async_abort(reason="already_configured_inverter")
+
+        if existing is not None:
+            state = str(getattr(existing.state, "value", existing.state))
+            if state in {"setup_in_progress", "setup_retry", "unload_in_progress", "failed_unload"}:
+                return self.async_abort(reason="already_configured_inverter")
+            if state == "not_loaded":
+                _LOGGER.info(
+                    "DWARS schedules setup of existing GoodWe entry %s; stored connection unchanged",
+                    existing.entry_id,
+                )
+                self.hass.config_entries.async_schedule_reload(existing.entry_id)
+                return self.async_abort(reason="already_configured_inverter")
 
         # Use the successful scan transport first. Identity alone is not enough:
         # require a real runtime read on the SAME connection before saving it.
@@ -393,10 +416,11 @@ class GoodweFlowHandler(ConfigFlow, domain=DOMAIN):
                 family=type(inverter).__name__, mac=data.get("mac"),
             )
             self.hass.config_entries.async_update_entry(existing, data=updated, options=options)
-            # No double-scheduled reload. Failed entries have no active listeners;
-            # recheck state immediately before touching a newly recovered entry.
+            # Do not await reload inside an import step. First-domain setup
+            # waits for this very import to finish. Schedule through HA so the
+            # flow can return and release its import-initialization barrier.
             if not entry_is_loaded(existing):
-                await self.hass.config_entries.async_reload(existing.entry_id)
+                self.hass.config_entries.async_schedule_reload(existing.entry_id)
             return self.async_abort(reason="already_configured_inverter")
 
         result = await self.async_handle_successful_connection(

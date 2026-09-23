@@ -42,7 +42,8 @@
       "already_configured": "Host en poort zijn al geconfigureerd in een andere hub.",
       "reconfigure_successful": "De herconfiguratie was succesvol",
       "updated_ip": "Het opgeslagen SolarEdge IP-adres is bijgewerkt vanuit DHCP-detectie.",
-      "not_solaredge": "Het gevonden apparaat reageerde niet als SolarEdge Modbus-omvormer."
+      "not_solaredge": "Het gevonden apparaat reageerde niet als SolarEdge Modbus-omvormer.",
+      "dwars_scan_requires_system": "Werk de DWARS-installatiebrug bij naar 1.2.0 en herstart Home Assistant. De oude import-scan kan het laden blokkeren."
     }
   },
   "options": {

@@ -1,10 +1,12 @@
-# DWARS OneShot-release 0.6.3
+# DWARS OneShot-release 0.6.4
 
-**Herstel voor GoodWe-configuratie en hervatten na handmatige installatie.** Flow-/migratieversies zijn consistent; automatisch toevoegen vereist echte meetdata; een werkende handmatige omvormer en agent worden hergebruikt. Sensorproblemen leiden niet meer tot opnieuw installeren van een aanwezige omvormer.
+**Herstel voor vastlopen op `discover` met een GoodWe-configuratie op `not_loaded`.** De bovenliggende automatische scan gebruikt nu een `system`-flow; elke gevonden omvormer wordt met een afzonderlijke `import`-flow toegevoegd. Daarmee wordt een circulaire afhankelijkheid van Home Assistants eerste integratielading vermeden. Ook een herstelactie wacht niet meer binnen een onafgeronde import op het herladen van diezelfde integratie.
 
-Begin bij [ONESHOT_HERSTEL_0.6.3.md](ONESHOT_HERSTEL_0.6.3.md) voor herstel op een reeds werkende Raspberry. Verwijder geen integratie, agent of opgeslagen key. Alleen het GitHub-pakket verandert; de eerdere EMS/BMS-OneShot-update blijft vereist.
+Begin bij [ONESHOT_HERSTEL_0.6.4.md](ONESHOT_HERSTEL_0.6.4.md). **Verwijder bestaande GoodWe-configuraties, agents of opgeslagen API-keys niet.** De releaseovergang ververst de software en vraagt bij hervatten één Core-herstart aan om eventueel nog geblokkeerde oude taken te beëindigen. Alleen het GitHub-pakket verandert; de eerdere EMS/BMS-OneShot-update blijft vereist.
 
-Versies: installer **0.6.3**, GoodWe-integratie **0.9.9.36**, DWARS Setup **1.1.0**. Zie het [testrapport](ONESHOT_HERSTEL_0.6.3_TESTRAPPORT.md) voor 213 lokale tests en de grenzen: geen fysieke HA/Supervisor-/omvormertest. Eerst één Raspberry valideren.
+Versies: installer **0.6.4**, GoodWe-integratie **0.9.9.37**, SolarEdge-integratie **3.2.8**, DWARS Setup **1.2.0**. De agentversies blijven ongewijzigd.
+
+Het [testrapport](ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md) bevat de voor/na-reproductie en 237 lokale tests. **Geen echte Home Assistant/Supervisor, fysieke omvormer of ARM-build getest.** De oorspronkelijke productiemethoden zijn vergeleken met de nieuwe methoden tegen een model van de officiële HA-importbarrière; dit is geen volledige HA-runtime. Valideer eerst op één Raspberry.
 
 Voor een nieuwe installatie: open de OneShot-webinterface en voer de API-key in. Voor serververeisten en platformbeperkingen: [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md).
 

@@ -1,3 +1,17 @@
+# 0.6.4 — 2026-09-23
+
+- Herstelt een circulaire afhankelijkheid bij de eerste integratielading: de DWARS-bulkscan is een `system`-flow en geen bovenliggende `import`-flow. Losse omvormers blijven standaardimports. GoodWe en SolarEdge gebruiken dezelfde herstelde structuur.
+- Oude bruggen die een bulkimport starten krijgen een expliciete afwijzing; geen stille terugval naar de geblokkeerde route.
+- Herladen van een bestaande DWARS-GoodWe-entry wordt via `async_schedule_reload` gepland; de import wordt niet meer opgehouden door haar eigen herlaadactie.
+- Een bestaande ingeschakelde, DWARS-beheerde `not_loaded`-entry wordt met ongewijzigde opgeslagen verbinding geladen. Geladen, handmatige, uitgeschakelde of reeds ladende configuraties worden niet omgezet.
+- Releasehervatting ververst de payload en vraagt een persistente Core-herstart aan, ook als de nieuwe bestanden al op schijf staan. API-key, serienummers, configuratie-ID's en agentkoppelingen worden niet gewist.
+- Controle op brug 1.2.0 en minimaal GoodWe 0.9.9.37 / SolarEdge 3.2.8 voorkomt onvolledige publicatie.
+- Diagnose voegt HA-versie, component-laadstatus, ook nog niet geïnitialiseerde flows, scanfase, duur en een beperkte lijst verbindingsinstellingen toe. Geen volledige opties/context of sleutels geëxporteerd.
+- Time-out en annulering worden zichtbaar; een nog niet gekoppelde omvormer wordt niet als definitief monitoring-only aangemerkt.
+- 24 nieuwe tests; 237 lokale tests totaal. De oude code loopt in de nieuwe importbarrière-proef vast, de nieuwe code niet. Geen volledige HA-runtime of fysieke hardware getest.
+
+Zie `ONESHOT_HERSTEL_0.6.4.md` en `ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md` in de repositoryroot.
+
 # 0.6.3 — 2026-09-09
 
 - GoodWe flow/migratie beide schema 2.3; ontbrekende/default-null velden offline herstellen zonder geldige gebruikersinstellingen te vervangen.

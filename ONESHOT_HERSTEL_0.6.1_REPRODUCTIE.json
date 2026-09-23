@@ -1,0 +1,56 @@
+{
+  "environment": "local HTTP Supervisor contract double; real curl; no Home Assistant host or inverter",
+  "original": {
+    "version": "0.6.0",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "[DWARS Installer] GoodWe Agent / BMS: add-on niet gevonden in /addons. Controleer of deze repo in de Add-on Store is toegevoegd.\n",
+    "api_calls": [
+      [
+        "GET",
+        "/addons",
+        null
+      ]
+    ]
+  },
+  "fixed": {
+    "version": "0.6.1",
+    "exit_code": 0,
+    "stdout": "repo_goodwe_agent",
+    "stderr": "[DWARS Installer] GoodWe Agent / BMS: slug gevonden: repo_goodwe_agent\n[DWARS Installer] GoodWe Agent / BMS: installeren via Store API.\n",
+    "api_calls": [
+      [
+        "GET",
+        "/addons/self/info",
+        null
+      ],
+      [
+        "GET",
+        "/addons",
+        null
+      ],
+      [
+        "GET",
+        "/store/addons",
+        null
+      ],
+      [
+        "GET",
+        "/addons",
+        null
+      ],
+      [
+        "POST",
+        "/store/addons/repo_goodwe_agent/install",
+        {
+          "background": false
+        }
+      ],
+      [
+        "GET",
+        "/addons/repo_goodwe_agent/info",
+        null
+      ]
+    ]
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "release": "0.6.1",
+  "base_release": "0.6.0",
+  "scope": "GitHub installer only; EMS/BMS/inverter components/agents unchanged",
+  "tests": {
+    "installer_tests_passed": 126,
+    "new_regression_tests": 23,
+    "syntax_checks": {
+      "python": 52,
+      "json": 34,
+      "shell": 8,
+      "javascript": 1
+    },
+    "physical_raspberry": false,
+    "live_supervisor": false,
+    "arm_docker_build": false
+  },
+  "changes": [
+    {
+      "path": "ONESHOT_HERSTEL_0.6.1.md",
+      "status": "added",
+      "sha256_before": null,
+      "sha256_after": "31ed74aa114e9401292e3bd1a757e9d9ca68d6d707e8d02035288ff2c0da739f"
+    },
+    {
+      "path": "ONESHOT_HERSTEL_0.6.1_REPRODUCTIE.json",
+      "status": "added",
+      "sha256_before": null,
+      "sha256_after": "d678c41e85bdd85fc7f3bf81649da4e42552278ebe3dee0781511c09d805aee7"
+    },
+    {
+      "path": "ONESHOT_INSTALLATIE.md",
+      "status": "modified",
+      "sha256_before": "1d50723bae5d98b47b156218bceff8c1129aa0feb22f07baf4cd686cb1c32866",
+      "sha256_after": "c0b5ee51911a0839cbe432a9f49b96b549aa57f72488c5beace1f7c2fb1f4589"
+    },
+    {
+      "path": "ONESHOT_TESTRAPPORT.md",
+      "status": "modified",
+      "sha256_before": "3a3924676f8180abf4f6bf06d905923e87d59d351c9ebbc723a6c4f567c071e3",
+      "sha256_after": "397f1a8300333a3efd2c48aff8fdf826b94e6cae29afbaca01479e6a9f37712f"
+    },
+    {
+      "path": "README.md",
+      "status": "modified",
+      "sha256_before": "a86d73a15c5ac5dc12eff6e61cfeec4a7738a22612e0ec0120e9d70767da959e",
+      "sha256_after": "184a87528458bd83f02e54539fb8f4e0e1d26b946dd1a1f1018257463d7c49b0"
+    },
+    {
+      "path": "dwars_installer/CHANGELOG.md",
+      "status": "modified",
+      "sha256_before": "9fd77f20f7d246d539a7ba4b2dbc015098c8958596d52a9816c8c9e12f61bc99",
+      "sha256_after": "a799a85acb6117d6cdf142612bc94e6488515d25fce01ff899c2a503c27bfa2f"
+    },
+    {
+      "path": "dwars_installer/DOCS.md",
+      "status": "modified",
+      "sha256_before": "0c2f3e847cb16652841883b461f872425820c2058df5ab0d4984b8a0757b4376",
+      "sha256_after": "78b9c782d812edeb9845e500e24c3b3598f2d8f02e9f15aabb5ab994db52c075"
+    },
+    {
+      "path": "dwars_installer/Dockerfile",
+      "status": "modified",
+      "sha256_before": "67db9e82c4aa54f5b60fce8c412703baec72b4fe2d93430d01fbae5a99a085c6",
+      "sha256_after": "0e462b33d1f5a7544c7a38a7524a90052c52fde8eebe199c2ef7541b0624f698"
+    },
+    {
+      "path": "dwars_installer/config.json",
+      "status": "modified",
+      "sha256_before": "361bc0a85eb2db6d2547c78f1a0f8aa84b86c199b9ea0b26c622f7872997b4be",
+      "sha256_after": "e2110a98b5e6869512ee6354656ddcb6671acba0fed3cbddb6788af8a7581365"
+    },
+    {
+      "path": "dwars_installer/oneshot.html",
+      "status": "modified",
+      "sha256_before": "44a45721143c3d2a897fdf1122e12894fff75359c85f98ef9590ffdd043fb007",
+      "sha256_after": "06a24be3b2ace74e1af70f26a210775ee6611dbf7a0d3c7ee9a128e27a209f41"
+    },
+    {
+      "path": "dwars_installer/oneshot.py",
+      "status": "modified",
+      "sha256_before": "8f21ebc15868f23cf5ef9483909c8d8e4a1a3f13f465afaae509dbc641ac45bb",
+      "sha256_after": "d2b51b39a68c2bb7dc6bd4db8858c7e9075da6494cc068119a263ed6c500f35f"
+    },
+    {
+      "path": "dwars_installer/oneshot_common.py",
+      "status": "modified",
+      "sha256_before": "11cad4e9a626dcf8316e94ac740d3941089f21ba9ad150b8b01c729e7a2acbde",
+      "sha256_after": "1a1f9a48b80d01e3f9ee65918ffa0fe4b04c405c14ccd5fef076c0595e34b08f"
+    },
+    {
+      "path": "dwars_installer/run.sh",
+      "status": "modified",
+      "sha256_before": "5d3580119aa86191443cfe9b6c2cc16581f8a84addc0f245f57cbff5cfdca3f9",
+      "sha256_after": "302c719961ec16d12aae1f03e6a2f3dfba51adb1eff342f07571ec88e6fd5e51"
+    },
+    {
+      "path": "dwars_installer/tests/test_core_recovery.py",
+      "status": "modified",
+      "sha256_before": "236142c3f166829871e9f1fc1d1fb5f25a5eef419f76f09cdc034f712aa0c1d0",
+      "sha256_after": "8e5f9ec6859287dcf37cc44d9a5ab251589491e21103d2125f9f0b1da1e1cc07"
+    },
+    {
+      "path": "dwars_installer/tests/test_install_bootstrap.py",
+      "status": "added",
+      "sha256_before": null,
+      "sha256_after": "8c0b4e4027fd1b8e3f227124b28d85e456338a8433ffd4e8a3bf7b0281f925d3"
+    },
+    {
+      "path": "dwars_installer/tests/test_oneshot.py",
+      "status": "modified",
+      "sha256_before": "95610079ae11490919f8d33c4064e75a37db4bb52668669753d822dc7a6f7918",
+      "sha256_after": "f25d136ebf93350cbd8280f2975225e75dc0e289b84e674adc2044ebeed85f47"
+    }
+  ]
+}

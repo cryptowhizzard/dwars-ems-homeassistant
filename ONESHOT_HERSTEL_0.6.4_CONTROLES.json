@@ -1,0 +1,20 @@
+{
+  "release": "0.6.4",
+  "syntax_runtime": "Python 3.13.5",
+  "tests_passed": 237,
+  "python_syntax_files": 58,
+  "json_files": 43,
+  "bash_syntax_files": 8,
+  "manifest_versions": {
+    "dwars_installer/config.json": "0.6.4",
+    "custom_components/goodwe/manifest.json": "0.9.9.37",
+    "custom_components/dwars_setup/manifest.json": "1.2.0",
+    "custom_components/solaredge_modbus_multi/manifest.json": "3.2.8"
+  },
+  "agent_files_unchanged_from_0_6_3": true,
+  "real_home_assistant_tested": false,
+  "real_supervisor_tested": false,
+  "physical_inverter_tested": false,
+  "arm_docker_build_tested": false,
+  "reproduction": "ONESHOT_HERSTEL_0.6.4_REPRODUCTIE.json"
+}
