@@ -1,12 +1,26 @@
-# DWARS OneShot 0.6.3
+# DWARS OneShot 0.6.5
 
-Open de webinterface voor API-key-invoer. Bij een onderbroken OneShot blijft de opgeslagen key geldig; er hoeft niets gewist of opnieuw toegevoegd te worden.
+Deze versie corrigeert de automatische sensorkoppeling bij een al geladen GoodWe.
+De twee registers `active_power_total` en `meter_active_power_total` veroorzaken
+geen onterechte dubbelmatch meer. De stap heet **Sensoren automatisch aan de
+agent koppelen**; het is geen tweede ontdekking/installatie van de batterij.
 
-**Herstel van 0.6.2:** GoodWe-configuratieversie 2.3, runtime-uitlezing vóór automatisch toevoegen en behoud van reeds werkende handmatige configuraties. Bij tijdelijk ontbrekende sensoren blijft de installer op de sensorcontrole. De bestaande agent met dezelfde klantkey behoudt zijn handmatig ingevulde instellingen.
+Werk de installer-app daadwerkelijk bij naar **0.6.5**. Laat de werkende GoodWe-
+integratie, agent en API-key staan. De onderbroken taak hervat automatisch; zo
+nodig kies je **Opnieuw controleren**, niet **Zoek ontbrekende omvormers**. Bij een
+normale 0.6.4-hervatting met geldige bewaarde payload zijn geen nieuwe scan en
+Core-herstart nodig. Oudere/incomplete componentreleases volgen de veilige
+vernieuwingsroute. Een agent kan kort herstarten om ontbrekende koppelingen en
+installatieregistratie te laden.
 
-Werk de app echt bij naar **0.6.3** en publiceer de **complete** repository, inclusief GoodWe-integratie **0.9.9.36** en Setup-brug **1.1.0**. Een oude payload wordt eenmalig ververst; dat kan een Core-herstart vragen maar verwijdert geen apparaatconfiguratie. Kies bij een afgeronde taak **Opnieuw controleren**; kies bij beschermd legacy **Start met opgeslagen API-key**. Een aparte actie **Zoek ontbrekende omvormers** is alleen voor daadwerkelijk ontbrekende apparaten. De UI kan een diagnosebestand zonder API-keys opslaan.
+De noodzakelijke controles op valide sensoren, apparaatselectie en BMS-ontvangst
+blijven bestaan. Bestaande expliciete agentinstellingen worden behouden. Slechts
+één besturingsagent wordt geactiveerd. Een onbekende of dubbele fysieke
+batterij-omvormer wordt niet willekeurig gekozen.
 
-EMS/BMS blijven ongewijzigd; de eerder geleverde OneShot-serverupdate/migratie moet aanwezig zijn. Volledige instructies: `ONESHOT_HERSTEL_0.6.3.md` in de repositoryroot. Laat werkende integratie en agent staan. Eerst op één Raspberry valideren; geen fysieke Raspberry-/omvormertest uitgevoerd.
+EMS/BMS blijven ongewijzigd. Volledige instructies en testgrenzen staan in
+`ONESHOT_HERSTEL_0.6.5.md` en `ONESHOT_HERSTEL_0.6.5_TESTRAPPORT.md` in de
+repositoryroot. Geen fysieke Raspberry-/omvormertest uitgevoerd.
 
 ## Bestaande handmatige installer- en updaterdocumentatie
 

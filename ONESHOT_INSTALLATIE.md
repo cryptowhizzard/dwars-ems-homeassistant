@@ -1,4 +1,4 @@
-> Actuele herstelrelease: **0.6.4**. Zie [ONESHOT_HERSTEL_0.6.4.md](ONESHOT_HERSTEL_0.6.4.md) en [het actuele testrapport](ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md). Hieronder staat de eerdere algemene documentatie; oudere versienummers/testaantallen zijn historisch.
+> Actuele herstelrelease: **0.6.5**. Zie [ONESHOT_HERSTEL_0.6.5.md](ONESHOT_HERSTEL_0.6.5.md) en [het actuele testrapport](ONESHOT_HERSTEL_0.6.5_TESTRAPPORT.md). Hieronder staat de eerdere algemene documentatie; oudere versienummers/testaantallen zijn historisch.
 
 > **Actuele release: 0.6.3.** Onderstaande basisdocumentatie/testhistorie beschrijft de eerste OneShot-release. Voor het herstel, actuele testresultaten en beperkingen zijn `ONESHOT_HERSTEL_0.6.3.md` en `ONESHOT_HERSTEL_0.6.3_TESTRAPPORT.md` leidend.
 

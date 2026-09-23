@@ -13,7 +13,7 @@ import tempfile
 from urllib.parse import urljoin, urlsplit
 import zipfile
 
-VERSION = "0.6.4"
+VERSION = "0.6.5"
 DOMAIN = {"goodwe": "goodwe", "solaredge": "solaredge_modbus_multi", "other": None}
 AGENT = {"goodwe": "goodwe_agent", "solaredge": "solaredge_agent", "other": "dwars_addon"}
 
@@ -196,34 +196,54 @@ def _normalized(text):
 
 
 def match_entity(device, domains, aliases, root=None):
-    """Select by integration identity, NEVER across physical inverter groups."""
+    """Bind complete sensor identities, not overlapping word suffixes.
+
+    GoodWe supplies ``[goodwe-]<register>-<serial>`` unique IDs. Once
+    the known device identity is removed, the remaining register is exact:
+    ``active_power_total`` and ``meter_active_power_total`` are NOT the same
+    register. Alias order is the preference order, not an ambiguity.
+
+    Other integrations may prefix a key with an opaque device identity. Keep
+    their legacy, boundary-delimited suffix fallback, below all exact matches.
+    Real ties still block; list order, current values and translated labels
+    must never choose the controller or an arbitrary meter.
+    """
     ranked = []
+    aliases = tuple(_normalized(alias) for alias in aliases)
+    serial = _normalized(device.get("serial"))
+    goodwe = device.get("platform") == "goodwe"
     for row in device.get("entities", []):
         if row["entity_id"].split(".")[0] not in domains:
             continue
         if root is not None and bool(row.get("is_root")) != root:
             continue
         uid = _normalized(row.get("unique_id"))
-        # GoodWe's unique-id is goodwe-<sensor key>-<serial>.
-        serial = _normalized(device.get("serial"))
+        canonical_goodwe = False
         if serial and uid.endswith("_" + serial):
             uid = uid[:-len(serial)-1]
             if uid.startswith("goodwe_"):
                 uid = uid[len("goodwe_"):]
-        fields = [_normalized(row.get("translation_key")), uid]
-        best = 0
+            canonical_goodwe = goodwe
+        # The register encoded in a GoodWe unique_id is authoritative. A
+        # generic translation key must not turn a different register into it.
+        fields = [uid] if canonical_goodwe else [uid, _normalized(row.get("translation_key"))]
+        best = (0, 0)
         for priority, alias in enumerate(aliases):
             for field in fields:
-                if field == alias or field.endswith("_" + alias):
-                    best = max(best, 100 - priority)
-        if best:
+                if field == alias:
+                    best = max(best, (2, -priority))
+                elif not goodwe and field.endswith("_" + alias):
+                    best = max(best, (1, -priority))
+        if best[0]:
             ranked.append((best, row))
     if not ranked:
         return None
     ranked.sort(key=lambda item: item[0], reverse=True)
     tied = [row for score, row in ranked if score == ranked[0][0]]
     if len(tied) > 1:
-        raise Blocked("Meer dan één passende entiteit voor " + aliases[0] + "; leg de mapping vast in EMS.")
+        names = ", ".join(sorted(row["entity_id"] for row in tied))
+        raise Blocked("Meer dan één passende entiteit voor " + aliases[0]
+                      + ": " + names + "; leg de mapping vast in EMS.")
     return ranked[0][1]
 
 

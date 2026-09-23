@@ -11,6 +11,7 @@ from unittest import mock
 
 from test_auto_updater import FakeClient, mod
 from core_recovery import CoreRecovery, core_config_ready
+from oneshot_common import VERSION
 
 
 class Clock:
@@ -316,7 +317,7 @@ class ShellIntegrationTests(unittest.TestCase):
         self.assertTrue(config['hassio_api'])
         self.assertTrue(config['homeassistant_api'])
         self.assertEqual(config['hassio_role'], 'manager')
-        self.assertEqual(config['version'], '0.6.4')
+        self.assertEqual(config['version'], VERSION)
         self.assertEqual(set(config['options']), set(config['schema']))
         self.assertIn('COPY core_recovery.py /app/core_recovery.py', (self.root/'Dockerfile').read_text())
 

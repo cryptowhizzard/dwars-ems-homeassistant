@@ -28,7 +28,7 @@ from test_oneshot import profile, device
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'dwars_installer'))
 from oneshot import OneShot, APIError
-from oneshot_common import AGENT, DOMAIN, Blocked, atomic_json, load_json, legacy_api_key
+from oneshot_common import AGENT, DOMAIN, VERSION, Blocked, atomic_json, load_json, legacy_api_key
 
 
 class KeyTests(unittest.TestCase):
@@ -302,7 +302,7 @@ class WorkerHTTPTests(unittest.IsolatedAsyncioTestCase):
         one.config_dir=self.path/'ha';one.config_dir.mkdir(exist_ok=True)
         one.supervisor=remote.url;one.token=lambda:'fixture-supervisor-token'
         # Use the supplied payload as a downloaded cache, not the public repo.
-        one.state.update(payload_root=str(ROOT), payload_version='0.6.4', installer_version='0.6.4')
+        one.state.update(payload_root=str(ROOT), payload_version=VERSION, installer_version=VERSION)
         async def bms(name,payload=None,query=''):
             return await one.request('POST' if payload is not None else 'GET',remote.url+'/bms/'+name+query,
                                      payload,key=one.credentials['api_key'])

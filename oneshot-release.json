@@ -1,16 +1,19 @@
 {
   "release_date": "2026-09-23",
-  "installer_version": "0.6.4",
+  "installer_version": "0.6.5",
   "protocol_version": 1,
   "component_versions": {
     "goodwe": "0.9.9.37",
     "solaredge_modbus_multi": "3.2.8",
     "dwars_setup": "1.2.0"
   },
-  "python_tests_passed": 237,
-  "new_regression_tests": 24,
-  "test_transport": "local HTTP/WebSocket doubles and production-method tests with a HA Core 2026.9.0 import-barrier contract model; NOT a full Home Assistant runtime",
-  "old_code_deadlock_reproduced": true,
+  "python_tests_passed": 268,
+  "new_regression_tests": 31,
+  "test_transport": "Local HTTP/WebSocket doubles and production-method tests; not a full Home Assistant/Supervisor runtime.",
+  "current_diagnostic_mapping_error_reproduced_on_0_6_4": true,
+  "reported_inventory_entities": 194,
+  "reported_inventory_mappings_after_fix": 13,
+  "existing_0_6_4_components_changed": false,
   "hardware_tested": false,
   "real_home_assistant_tested": false,
   "real_supervisor_tested": false,
@@ -19,7 +22,8 @@
   "ems_bms_changed": false,
   "php_retested_this_release": false,
   "server_packages_required": "EMS/BMS OneShot 20260908 + migrations/20260908_oneshot.php",
-  "report": "ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md",
-  "recovery_guide": "ONESHOT_HERSTEL_0.6.4.md",
-  "reproduction": "ONESHOT_HERSTEL_0.6.4_REPRODUCTIE.json"
+  "report": "ONESHOT_HERSTEL_0.6.5_TESTRAPPORT.md",
+  "recovery_guide": "ONESHOT_HERSTEL_0.6.5.md",
+  "reproduction": "ONESHOT_HERSTEL_0.6.5_REPRODUCTIE.json",
+  "changes": "ONESHOT_HERSTEL_0.6.5_WIJZIGINGEN.json"
 }

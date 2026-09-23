@@ -1,0 +1,1385 @@
+{
+  "platform": "goodwe",
+  "serial": "TESTGW00000001",
+  "host": "192.0.2.103",
+  "entry_id": "test-ha-config-entry",
+  "model": "anonymised-test-model",
+  "state": "loaded",
+  "config_version": 2,
+  "config_minor_version": 3,
+  "disabled_by": "",
+  "component_loaded": true,
+  "source": "import",
+  "reason": "",
+  "connection": {
+    "host": "192.0.2.103",
+    "port": 502,
+    "protocol": "TCP",
+    "model_family": "ET",
+    "modbus_id": 0,
+    "network_timeout": 2,
+    "network_retries": 10,
+    "keep_alive": false,
+    "scan_interval": 5
+  },
+  "entities": [
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_timestamp",
+      "unique_id": "goodwe-timestamp-TESTGW00000001",
+      "state": "2026-09-23 19:17:52",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.126612+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv1_voltage",
+      "unique_id": "goodwe-vpv1-TESTGW00000001",
+      "state": "188.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127122+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv1_current",
+      "unique_id": "goodwe-ipv1-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127295+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv1_power",
+      "unique_id": "goodwe-ppv1-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127440+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv2_voltage",
+      "unique_id": "goodwe-vpv2-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127580+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv2_current",
+      "unique_id": "goodwe-ipv2-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127717+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv2_power",
+      "unique_id": "goodwe-ppv2-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127846+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv_power",
+      "unique_id": "goodwe-ppv-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.127975+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv2_mode_code",
+      "unique_id": "goodwe-pv2_mode-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128093+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv2_mode",
+      "unique_id": "goodwe-pv2_mode_label-TESTGW00000001",
+      "state": "PV panels not connected",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128209+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv1_mode_code",
+      "unique_id": "goodwe-pv1_mode-TESTGW00000001",
+      "state": "2",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128327+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv1_mode",
+      "unique_id": "goodwe-pv1_mode_label-TESTGW00000001",
+      "state": "PV panels connected, producing power",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128441+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_l1_voltage",
+      "unique_id": "goodwe-vgrid-TESTGW00000001",
+      "state": "229.6",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128584+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_l1_current",
+      "unique_id": "goodwe-igrid-TESTGW00000001",
+      "state": "1.1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.128861+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_l1_frequency",
+      "unique_id": "goodwe-fgrid-TESTGW00000001",
+      "state": "50.01",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129009+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_l1_power",
+      "unique_id": "goodwe-pgrid-TESTGW00000001",
+      "state": "109",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129136+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_grid_mode_code",
+      "unique_id": "goodwe-grid_mode-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129313+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_grid_mode",
+      "unique_id": "goodwe-grid_mode_label-TESTGW00000001",
+      "state": "Connected to grid",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129440+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_power",
+      "unique_id": "goodwe-total_inverter_power-TESTGW00000001",
+      "state": "109",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129563+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_active_power",
+      "unique_id": "goodwe-active_power-TESTGW00000001",
+      "state": "-1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129688+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_mode_code",
+      "unique_id": "goodwe-grid_in_out-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.129930+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_on_grid_mode",
+      "unique_id": "goodwe-grid_in_out_label-TESTGW00000001",
+      "state": "Idle",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130052+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_reactive_power",
+      "unique_id": "goodwe-reactive_power-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_apparent_power",
+      "unique_id": "goodwe-apparent_power-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_back_up_l1_voltage",
+      "unique_id": "goodwe-backup_v1-TESTGW00000001",
+      "state": "230.8",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130178+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_back_up_l1_current",
+      "unique_id": "goodwe-backup_i1-TESTGW00000001",
+      "state": "0.9",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130275+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_back_up_l1_frequency",
+      "unique_id": "goodwe-backup_f1-TESTGW00000001",
+      "state": "50.01",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130374+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_load_mode_l1",
+      "unique_id": "goodwe-load_mode1-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130460+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_back_up_l1_power",
+      "unique_id": "goodwe-backup_p1-TESTGW00000001",
+      "state": "102",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130547+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_load_l1",
+      "unique_id": "goodwe-load_p1-TESTGW00000001",
+      "state": "6",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130719+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_back_up_load",
+      "unique_id": "goodwe-backup_ptotal-TESTGW00000001",
+      "state": "102",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130809+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_load",
+      "unique_id": "goodwe-load_ptotal-TESTGW00000001",
+      "state": "6",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.130969+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_ups_load",
+      "unique_id": "goodwe-ups_load-TESTGW00000001",
+      "state": "2",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131058+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_temperature_air",
+      "unique_id": "goodwe-temperature_air-TESTGW00000001",
+      "state": "22.7",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131160+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_temperature_module",
+      "unique_id": "goodwe-temperature_module-TESTGW00000001",
+      "state": "36.6",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131259+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_temperature_radiator",
+      "unique_id": "goodwe-temperature-TESTGW00000001",
+      "state": "28.4",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131355+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_function_bit",
+      "unique_id": "goodwe-function_bit-TESTGW00000001",
+      "state": "386",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131439+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_bus_voltage",
+      "unique_id": "goodwe-bus_voltage-TESTGW00000001",
+      "state": "379.7",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131534+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_nbus_voltage",
+      "unique_id": "goodwe-nbus_voltage-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131715+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_voltage",
+      "unique_id": "goodwe-vbattery1-TESTGW00000001",
+      "state": "379.6",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131809+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_current",
+      "unique_id": "goodwe-ibattery1-TESTGW00000001",
+      "state": "0.3",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.131973+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_power",
+      "unique_id": "goodwe-pbattery1-TESTGW00000001",
+      "state": "158",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.132130+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_mode_code",
+      "unique_id": "goodwe-battery_mode-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135249+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_mode",
+      "unique_id": "goodwe-battery_mode_label-TESTGW00000001",
+      "state": "Standby",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135370+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_warning_code",
+      "unique_id": "goodwe-warning_code-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135457+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_safety_country_code",
+      "unique_id": "goodwe-safety_country-TESTGW00000001",
+      "state": "20",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135544+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_safety_country",
+      "unique_id": "goodwe-safety_country_label-TESTGW00000001",
+      "state": "NL-A",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135632+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_work_mode_code",
+      "unique_id": "goodwe-work_mode-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135715+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_work_mode",
+      "unique_id": "goodwe-work_mode_label-TESTGW00000001",
+      "state": "Normal (On-Grid)",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135794+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_operation_mode_code",
+      "unique_id": "goodwe-operation_mode-TESTGW00000001",
+      "state": "2",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135876+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_error_codes",
+      "unique_id": "goodwe-error_codes-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.135958+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_errors",
+      "unique_id": "goodwe-errors-TESTGW00000001",
+      "state": "",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136033+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_pv_generation",
+      "unique_id": "goodwe-e_total-TESTGW00000001",
+      "state": "2.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136143+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_s_pv_generation",
+      "unique_id": "goodwe-e_day-TESTGW00000001",
+      "state": "2.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136241+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_energy_export",
+      "unique_id": "goodwe-e_total_exp-TESTGW00000001",
+      "state": "1.1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136339+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_hours_total",
+      "unique_id": "goodwe-h_total-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_energy_export",
+      "unique_id": "goodwe-e_day_exp-TESTGW00000001",
+      "state": "1.1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136440+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_energy_import",
+      "unique_id": "goodwe-e_total_imp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136544+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_energy_import",
+      "unique_id": "goodwe-e_day_imp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136636+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_load",
+      "unique_id": "goodwe-e_load_total-TESTGW00000001",
+      "state": "1.2",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136727+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_load",
+      "unique_id": "goodwe-e_load_day-TESTGW00000001",
+      "state": "1.2",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136818+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_battery_charge",
+      "unique_id": "goodwe-e_bat_charge_total-TESTGW00000001",
+      "state": "0.9",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136908+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_battery_charge",
+      "unique_id": "goodwe-e_bat_charge_day-TESTGW00000001",
+      "state": "0.9",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.136998+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_total_battery_discharge",
+      "unique_id": "goodwe-e_bat_discharge_total-TESTGW00000001",
+      "state": "0.4",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137088+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_today_battery_discharge",
+      "unique_id": "goodwe-e_bat_discharge_day-TESTGW00000001",
+      "state": "0.4",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137177+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_diag_status_code",
+      "unique_id": "goodwe-diagnose_result-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137314+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_diag_status",
+      "unique_id": "goodwe-diagnose_result_label-TESTGW00000001",
+      "state": "",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137395+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_house_consumption",
+      "unique_id": "goodwe-house_consumption-TESTGW00000001",
+      "state": "159",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137486+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_commode",
+      "unique_id": "goodwe-commode-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137689+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_rssi",
+      "unique_id": "goodwe-rssi-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137778+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_manufacture_code",
+      "unique_id": "goodwe-manufacture_code-TESTGW00000001",
+      "state": "10",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137857+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_test_status",
+      "unique_id": "goodwe-meter_test_status-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.137936+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_communication_status",
+      "unique_id": "goodwe-meter_comm_status-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138013+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_active_power_l1",
+      "unique_id": "goodwe-active_power1-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138096+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_active_power_total",
+      "unique_id": "goodwe-active_power_total-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138245+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_reactive_power_total",
+      "unique_id": "goodwe-reactive_power_total-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_power_factor_l1",
+      "unique_id": "goodwe-meter_power_factor1-TESTGW00000001",
+      "state": "-0.003",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138438+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_power_factor",
+      "unique_id": "goodwe-meter_power_factor-TESTGW00000001",
+      "state": "-0.004",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138566+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_frequency",
+      "unique_id": "goodwe-meter_freq-TESTGW00000001",
+      "state": "50.02",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138690+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_total_energy_export",
+      "unique_id": "goodwe-meter_e_total_exp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138767+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_total_energy_import",
+      "unique_id": "goodwe-meter_e_total_imp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138836+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_active_power_l1",
+      "unique_id": "goodwe-meter_active_power1-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.138904+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_active_power_total",
+      "unique_id": "goodwe-meter_active_power_total-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139022+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_reactive_power_l1",
+      "unique_id": "goodwe-meter_reactive_power1-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_reactive_power_total",
+      "unique_id": "goodwe-meter_reactive_power_total-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_apparent_power_l1",
+      "unique_id": "goodwe-meter_apparent_power1-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_apparent_power_total",
+      "unique_id": "goodwe-meter_apparent_power_total-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_type",
+      "unique_id": "goodwe-meter_type-TESTGW00000001",
+      "state": "255",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139085+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_software_version",
+      "unique_id": "goodwe-meter_sw_version-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139145+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_2_active_power",
+      "unique_id": "goodwe-meter2_active_power-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139206+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_2_total_energy_export",
+      "unique_id": "goodwe-meter2_e_total_exp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139274+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_2_total_energy_import",
+      "unique_id": "goodwe-meter2_e_total_imp-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139341+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_2_communication_status",
+      "unique_id": "goodwe-meter2_comm_status-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139401+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_l1_voltage",
+      "unique_id": "goodwe-meter_voltage1-TESTGW00000001",
+      "state": "230.8",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139468+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_l1_current",
+      "unique_id": "goodwe-meter_current1-TESTGW00000001",
+      "state": "0.8",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139595+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_total_energy_export_l1",
+      "unique_id": "goodwe-meter_e_total_exp1-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139667+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_meter_total_energy_import_l1",
+      "unique_id": "goodwe-meter_e_total_imp1-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139733+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_bms",
+      "unique_id": "goodwe-battery_bms-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139795+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_index",
+      "unique_id": "goodwe-battery_index-TESTGW00000001",
+      "state": "465",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139855+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_status",
+      "unique_id": "goodwe-battery_status-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139916+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_temperature",
+      "unique_id": "goodwe-battery_temperature-TESTGW00000001",
+      "state": "22.5",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.139992+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_charge_limit",
+      "unique_id": "goodwe-battery_charge_limit-TESTGW00000001",
+      "state": "186",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.140057+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_discharge_limit",
+      "unique_id": "goodwe-battery_discharge_limit-TESTGW00000001",
+      "state": "214",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.140119+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_error_l",
+      "unique_id": "goodwe-battery_error_l-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.140179+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_state_of_charge",
+      "unique_id": "goodwe-battery_soc-TESTGW00000001",
+      "state": "44",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142285+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_state_of_health",
+      "unique_id": "goodwe-battery_soh-TESTGW00000001",
+      "state": "100",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142378+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_modules",
+      "unique_id": "goodwe-battery_modules-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142442+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_warning_l",
+      "unique_id": "goodwe-battery_warning_l-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142503+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_protocol",
+      "unique_id": "goodwe-battery_protocol-TESTGW00000001",
+      "state": "294",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142563+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_error_h",
+      "unique_id": "goodwe-battery_error_h-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142621+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_error",
+      "unique_id": "goodwe-battery_error-TESTGW00000001",
+      "state": "",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142677+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_warning_h",
+      "unique_id": "goodwe-battery_warning_h-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142734+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_warning",
+      "unique_id": "goodwe-battery_warning-TESTGW00000001",
+      "state": "",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142788+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_software_version",
+      "unique_id": "goodwe-battery_sw_version-TESTGW00000001",
+      "state": "1028",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142845+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_hardware_version",
+      "unique_id": "goodwe-battery_hw_version-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142905+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_max_cell_temperature_id",
+      "unique_id": "goodwe-battery_max_cell_temp_id-TESTGW00000001",
+      "state": "1041",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.142965+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_min_cell_temperature_id",
+      "unique_id": "goodwe-battery_min_cell_temp_id-TESTGW00000001",
+      "state": "273",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143026+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_max_cell_voltage_id",
+      "unique_id": "goodwe-battery_max_cell_voltage_id-TESTGW00000001",
+      "state": "545",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143085+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_min_cell_voltage_id",
+      "unique_id": "goodwe-battery_min_cell_voltage_id-TESTGW00000001",
+      "state": "273",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143257+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_max_cell_temperature",
+      "unique_id": "goodwe-battery_max_cell_temp-TESTGW00000001",
+      "state": "23.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143349+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_min_cell_temperature",
+      "unique_id": "goodwe-battery_min_cell_temp-TESTGW00000001",
+      "state": "22.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143421+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_max_cell_voltage",
+      "unique_id": "goodwe-battery_max_cell_voltage-TESTGW00000001",
+      "state": "3.29",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143495+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_battery_min_cell_voltage",
+      "unique_id": "goodwe-battery_min_cell_voltage-TESTGW00000001",
+      "state": "3.288",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143564+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv_power_total",
+      "unique_id": "goodwe-ppv_total-TESTGW00000001",
+      "state": "3",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143631+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv_channel",
+      "unique_id": "goodwe-pv_channel-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143693+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv5_voltage",
+      "unique_id": "goodwe-vpv5-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143756+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv5_current",
+      "unique_id": "goodwe-ipv5-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143821+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv6_voltage",
+      "unique_id": "goodwe-vpv6-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143881+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv6_current",
+      "unique_id": "goodwe-ipv6-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.143939+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv7_voltage",
+      "unique_id": "goodwe-vpv7-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144000+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv7_current",
+      "unique_id": "goodwe-ipv7-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144059+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv8_voltage",
+      "unique_id": "goodwe-vpv8-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144120+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv8_current",
+      "unique_id": "goodwe-ipv8-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144179+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv9_voltage",
+      "unique_id": "goodwe-vpv9-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144239+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv9_current",
+      "unique_id": "goodwe-ipv9-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144298+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv10_voltage",
+      "unique_id": "goodwe-vpv10-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144357+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv10_current",
+      "unique_id": "goodwe-ipv10-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144416+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv11_voltage",
+      "unique_id": "goodwe-vpv11-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144476+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv11_current",
+      "unique_id": "goodwe-ipv11-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144536+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv12_voltage",
+      "unique_id": "goodwe-vpv12-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144594+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv12_current",
+      "unique_id": "goodwe-ipv12-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144653+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv13_voltage",
+      "unique_id": "goodwe-vpv13-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144712+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv13_current",
+      "unique_id": "goodwe-ipv13-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144772+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv14_voltage",
+      "unique_id": "goodwe-vpv14-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144830+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv14_current",
+      "unique_id": "goodwe-ipv14-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144888+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv15_voltage",
+      "unique_id": "goodwe-vpv15-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.144946+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv15_current",
+      "unique_id": "goodwe-ipv15-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145005+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv16_voltage",
+      "unique_id": "goodwe-vpv16-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145063+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_pv16_current",
+      "unique_id": "goodwe-ipv16-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145121+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt1_power",
+      "unique_id": "goodwe-pmppt1-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145179+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt2_power",
+      "unique_id": "goodwe-pmppt2-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145260+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt3_power",
+      "unique_id": "goodwe-pmppt3-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145320+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt4_power",
+      "unique_id": "goodwe-pmppt4-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145377+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt5_power",
+      "unique_id": "goodwe-pmppt5-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145429+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt6_power",
+      "unique_id": "goodwe-pmppt6-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145479+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt7_power",
+      "unique_id": "goodwe-pmppt7-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145530+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt8_power",
+      "unique_id": "goodwe-pmppt8-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145579+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt1_current",
+      "unique_id": "goodwe-imppt1-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145646+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt2_current",
+      "unique_id": "goodwe-imppt2-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145708+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt3_current",
+      "unique_id": "goodwe-imppt3-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145770+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt4_current",
+      "unique_id": "goodwe-imppt4-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145831+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt5_current",
+      "unique_id": "goodwe-imppt5-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145888+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt6_current",
+      "unique_id": "goodwe-imppt6-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.145945+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt7_current",
+      "unique_id": "goodwe-imppt7-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146000+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_mppt8_current",
+      "unique_id": "goodwe-imppt8-TESTGW00000001",
+      "state": "0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146107+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_reactive_power_l1",
+      "unique_id": "goodwe-reactive_power1-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_reactive_power_l2",
+      "unique_id": "goodwe-reactive_power2-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_reactive_power_l3",
+      "unique_id": "goodwe-reactive_power3-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_apparent_power_l1",
+      "unique_id": "goodwe-apparent_power1-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_apparent_power_l2",
+      "unique_id": "goodwe-apparent_power2-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_apparent_power_l3",
+      "unique_id": "goodwe-apparent_power3-TESTGW00000001",
+      "state": null,
+      "disabled_by": "integration",
+      "last_reported": null
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_serial_number",
+      "unique_id": "goodwe-inverter_serial_number-TESTGW00000001",
+      "state": "TESTGW00000001",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146226+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_ip_address",
+      "unique_id": "goodwe-inverter_ip_address-TESTGW00000001",
+      "state": "192.0.2.103",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146287+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_mac_address",
+      "unique_id": "goodwe-inverter_mac_address-TESTGW00000001",
+      "state": "02:00:00:00:00:01",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146389+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_last_seen",
+      "unique_id": "goodwe-inverter_last_seen-TESTGW00000001",
+      "state": "2026-09-23T17:17:54+00:00",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146483+00:00"
+    },
+    {
+      "entity_id": "sensor.goodwe_testgw00000001_inverter_number_of_phases",
+      "unique_id": "goodwe-inverter_nr_phase-TESTGW00000001",
+      "state": "1",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146641+00:00"
+    },
+    {
+      "entity_id": "button.goodwe_testgw00000001_synchronize_inverter_clock",
+      "unique_id": "goodwe-synchronize_clock-TESTGW00000001",
+      "state": "unknown",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:02.169467+00:00"
+    },
+    {
+      "entity_id": "select.goodwe_testgw00000001_inverter_operation_mode",
+      "unique_id": "goodwe-operation_mode-TESTGW00000001",
+      "state": "general",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:02.446856+00:00"
+    },
+    {
+      "entity_id": "select.goodwe_testgw00000001_ems_mode",
+      "unique_id": "goodwe-ems_mode-TESTGW00000001",
+      "state": "auto",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:02.674694+00:00"
+    },
+    {
+      "entity_id": "switch.goodwe_testgw00000001_load_control",
+      "unique_id": "load_control-TESTGW00000001",
+      "state": "off",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146696+00:00"
+    },
+    {
+      "entity_id": "switch.goodwe_testgw00000001_grid_export_limit_switch",
+      "unique_id": "grid_export_limit_switch-TESTGW00000001",
+      "state": "off",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146737+00:00"
+    },
+    {
+      "entity_id": "switch.goodwe_testgw00000001_fast_charging_switch",
+      "unique_id": "fast_charging_switch-TESTGW00000001",
+      "state": "off",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146774+00:00"
+    },
+    {
+      "entity_id": "switch.goodwe_testgw00000001_backup_supply_switch",
+      "unique_id": "backup_supply_switch-TESTGW00000001",
+      "state": "on",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146811+00:00"
+    },
+    {
+      "entity_id": "switch.goodwe_testgw00000001_dod_holding",
+      "unique_id": "dod_holding_switch-TESTGW00000001",
+      "state": "on",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:17:54.146847+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_grid_export_limit",
+      "unique_id": "goodwe-grid_export_limit-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.657849+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_depth_of_discharge_on_grid",
+      "unique_id": "goodwe-battery_discharge_depth-TESTGW00000001",
+      "state": "60.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.659209+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_soc_upper_limit",
+      "unique_id": "goodwe-soc_upper_limit-TESTGW00000001",
+      "state": "100.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.660559+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_depth_of_discharge_backup",
+      "unique_id": "goodwe-battery_discharge_depth_offline-TESTGW00000001",
+      "state": "90.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.662326+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_eco_mode_power",
+      "unique_id": "goodwe-eco_mode_power-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.663685+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_eco_mode_soc",
+      "unique_id": "goodwe-eco_mode_soc-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.665179+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_fast_charging_power",
+      "unique_id": "goodwe-fast_charging_power-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.667184+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_fast_charging_soc",
+      "unique_id": "goodwe-fast_charging_soc-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.668689+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_ems_power_limit",
+      "unique_id": "goodwe-ems_power_limit-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.670328+00:00"
+    },
+    {
+      "entity_id": "number.goodwe_testgw00000001_battery_soc_protection",
+      "unique_id": "goodwe-battery_soc_protection-TESTGW00000001",
+      "state": "0.0",
+      "disabled_by": null,
+      "last_reported": "2026-09-23T17:14:03.672188+00:00"
+    }
+  ]
+}

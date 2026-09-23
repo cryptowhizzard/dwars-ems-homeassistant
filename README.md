@@ -1,14 +1,24 @@
-# DWARS OneShot-release 0.6.4
+# DWARS OneShot-release 0.6.5
 
-**Herstel voor vastlopen op `discover` met een GoodWe-configuratie op `not_loaded`.** De bovenliggende automatische scan gebruikt nu een `system`-flow; elke gevonden omvormer wordt met een afzonderlijke `import`-flow toegevoegd. Daarmee wordt een circulaire afhankelijkheid van Home Assistants eerste integratielading vermeden. Ook een herstelactie wacht niet meer binnen een onafgeronde import op het herladen van diezelfde integratie.
+**Correctie voor een geladen GoodWe die stopt bij de sensorkoppeling met
+`Meer dan één passende entiteit voor active_power_total`.** De matcher onderscheidt
+nu volledige registeridentiteiten van overlappende suffixen. Geen extra
+batterijdetectie; de bestaande sensoren worden automatisch aan de agent gekoppeld.
 
-Begin bij [ONESHOT_HERSTEL_0.6.4.md](ONESHOT_HERSTEL_0.6.4.md). **Verwijder bestaande GoodWe-configuraties, agents of opgeslagen API-keys niet.** De releaseovergang ververst de software en vraagt bij hervatten één Core-herstart aan om eventueel nog geblokkeerde oude taken te beëindigen. Alleen het GitHub-pakket verandert; de eerdere EMS/BMS-OneShot-update blijft vereist.
+Begin bij [ONESHOT_HERSTEL_0.6.5.md](ONESHOT_HERSTEL_0.6.5.md).
+**Laat werkende integraties, agents en API-keys staan.** Een hervatte 0.6.4-taak
+met geldige opgeslagen payload gaat vanaf de sensorkoppeling verder zonder
+nieuwe scan of geforceerde Core-herstart. Ontbrekende agentopties en de
+installatie-ID kunnen een korte agentherstart vragen.
 
-Versies: installer **0.6.4**, GoodWe-integratie **0.9.9.37**, SolarEdge-integratie **3.2.8**, DWARS Setup **1.2.0**. De agentversies blijven ongewijzigd.
+Alleen de installer gaat naar **0.6.5**. GoodWe **0.9.9.37**, DWARS Setup **1.2.0**,
+SolarEdge **3.2.8** en de agentsource blijven ongewijzigd. Geen nieuwe EMS/BMS-
+migratie; de eerder geleverde OneShot-serverupdate blijft vereist.
 
-Het [testrapport](ONESHOT_HERSTEL_0.6.4_TESTRAPPORT.md) bevat de voor/na-reproductie en 237 lokale tests. **Geen echte Home Assistant/Supervisor, fysieke omvormer of ARM-build getest.** De oorspronkelijke productiemethoden zijn vergeleken met de nieuwe methoden tegen een model van de officiële HA-importbarrière; dit is geen volledige HA-runtime. Valideer eerst op één Raspberry.
-
-Voor een nieuwe installatie: open de OneShot-webinterface en voer de API-key in. Voor serververeisten en platformbeperkingen: [ONESHOT_INSTALLATIE.md](ONESHOT_INSTALLATIE.md).
+Het [testrapport](ONESHOT_HERSTEL_0.6.5_TESTRAPPORT.md) beschrijft de voor/na-proef
+op de volledige diagnose-export, 31 nieuwe regressies en 268 lokale tests totaal.
+**Geen echte HA/Supervisor-runtime, fysieke omvormer of ARM-build getest.** Test
+voor brede uitrol eerst op één Raspberry.
 
 ## Bestaande projectdocumentatie
 

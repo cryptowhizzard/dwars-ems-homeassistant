@@ -34,7 +34,7 @@ LABELS = {
     "profile": "Klantconfiguratie ophalen", "payload": "Installatiebestanden ophalen",
     "components": "Home Assistant-integraties plaatsen", "restart": "Home Assistant herstarten en controleren",
     "bridge": "Lokale installatiebrug activeren", "discover": "Omvormers ontdekken en toevoegen",
-    "mapping": "Batterij en sensoren controleren", "agent": "DWARS-agent configureren en starten",
+    "mapping": "Sensoren automatisch aan de agent koppelen", "agent": "DWARS-agent configureren en starten",
     "verify": "Ontvangst van telemetrie bij BMS controleren", "complete": "Installatie gereed",
 }
 
@@ -266,6 +266,31 @@ class OneShot:
         if self.state.get("installer_version") == VERSION:
             return
         old_stage = self.state.get("stage", "profile")
+        # 0.6.5 changes the installer only. A completed 0.6.4 component pass
+        # already has the correct integrations/bridge. Preserve its cached
+        # payload (agent defaults), loaded devices and resume position; do not
+        # send a healthy site through a forced Core restart to fix a mapper.
+        if (self.state.get("installer_version") == "0.6.4"
+                and self.state.get("payload_version") == "0.6.4"
+                and old_stage in {"mapping", "agent", "verify", "complete"}
+                and self.state.get("payload_root")):
+            cached = Path(self.state["payload_root"])
+            try:
+                self.check_payload(cached)
+                defaults_file = cached / AGENT[self.profile["platform"]] / "config.json"
+                defaults = load_json(defaults_file)
+                compatible = isinstance(defaults.get("options"), dict)
+            except (Blocked, OSError, ValueError, TypeError):
+                compatible = False
+            if compatible:
+                snapshot = self.data / ("oneshot_before_" + VERSION + ".json")
+                if not snapshot.exists():
+                    atomic_json(snapshot, self.state)
+                self.log("Installercorrectie geladen; hervatten bij de bestaande sensorkoppeling/agent. "
+                         "Geen nieuwe ontdekking, herinstallatie of Core-herstart nodig.")
+                self.save(installer_version=VERSION, payload_version=VERSION,
+                          resumed_from_stage=old_stage)
+                return
         if old_stage not in {"profile", "payload", "complete"} or self.state.get("payload_root"):
             snapshot = self.data / ("oneshot_before_" + VERSION + ".json")
             if not snapshot.exists():
@@ -297,7 +322,7 @@ class OneShot:
                 actual = ()
             if actual < minimum:
                 raise Blocked("De repository bevat nog oude " + component
-                              + "-installatiecode. Publiceer het volledige 0.6.4-pakket in de ingestelde GitHub-branch. Niets overschreven.")
+                              + "-installatiecode. Publiceer het volledige " + VERSION + "-pakket in de ingestelde GitHub-branch. Niets overschreven.")
 
     async def payload_stage(self):
         root_path = self.state.get("payload_root")

@@ -1,3 +1,24 @@
+# 0.6.5 — 2026-09-23
+
+- GoodWe-sensorkoppeling vergelijkt volledige registeridentiteiten. Exacte
+  `active_power_total` en de alias `meter_active_power_total` delen niet meer
+  dezelfde score door suffixmatching. Aliassen behouden hun voorkeursvolgorde.
+- De bekende registeridentiteit weegt zwaarder dan generieke translation-keys;
+  aangepaste entity-ID's veranderen de selectie niet. Echte dubbelzinnigheid
+  blijft een blokkade en vermeldt nu de betrokken entity-ID's.
+- Staptekst: "Sensoren automatisch aan de agent koppelen". Geen nieuwe
+  batterijdetectie, geen omvormerinstellingen schrijven vanuit deze stap.
+- Installer-only hervatting vanaf 0.6.4 behoudt een geldige bewaarde payload en
+  de fase mapping/agent/verify: geen onnodige componentinstallatie of Core-restart.
+  Oudere/incomplete payloads blijven via de bestaande verversingsroute lopen.
+- Integraties, brug, agentbesturing en EMS/BMS blijven ongewijzigd.
+- 31 nieuwe tests met een letterlijke, geanonimiseerde 194-entiteiteninventaris,
+  waaronder volledige taaklus met lokale HTTP/WebSocket-services en hergebruik
+  van een handmatige agent. 268 lokale tests totaal. Geen fysieke hardware of
+  echte Home Assistant/Supervisor-runtime getest.
+
+Zie `ONESHOT_HERSTEL_0.6.5.md` en het bijbehorende testrapport.
+
 # 0.6.4 — 2026-09-23
 
 - Herstelt een circulaire afhankelijkheid bij de eerste integratielading: de DWARS-bulkscan is een `system`-flow en geen bovenliggende `import`-flow. Losse omvormers blijven standaardimports. GoodWe en SolarEdge gebruiken dezelfde herstelde structuur.
