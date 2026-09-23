@@ -2122,6 +2122,11 @@ def fetch_next_action() -> dict[str, Any]:
     response = requests.get(
         API_URL, headers=HEADERS_EXT, timeout=12, verify=VERIFY_SSL
     )
+    if response.status_code >= 400:
+        log(
+            f"next_action API ERROR: HTTP {response.status_code}; "
+            f"response={response.text[:2000]}"
+        )
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict):
